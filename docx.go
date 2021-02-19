@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -55,6 +56,19 @@ type ReplaceDocx struct {
 	links     string
 	headers   map[string]string
 	footers   map[string]string
+}
+
+//Open 打开word
+func Open(file string) (*Docx, *ReplaceDocx) {
+	r, err := ReadDocxFile(file)
+	if err != nil {
+		panic(err)
+	}
+	docx := r.Editable()
+	//修复错误标签
+	docx.fixBrokenMacros()
+
+	return docx, r
 }
 
 //Editable 初始化
@@ -417,7 +431,7 @@ func getRow(docx *Docx, startPosition, endPosition int) (content string) {
 func indexClonedVariables(xmlRow, mark string, n int) string {
 	var bt bytes.Buffer
 	// var markTemp string
-	reg := regexp.MustCompile(`\${(.*?)}`)
+	reg := regexp.MustCompile(`\$\{(.*?)\}`)
 
 	for i := 0; i < n; i++ {
 		bt.WriteString(reg.ReplaceAllString(xmlRow, "${$1#"+strconv.Itoa(i)+`}`))
@@ -447,4 +461,45 @@ func (d *Docx) CloneRow(mark string, n int) {
 		bt.WriteString(v)
 	}
 	d.content = bt.String()
+}
+
+//ImgValue 结构体
+type ImgValue struct {
+	Path   string
+	Weight uint
+	Height uint
+}
+
+// SetImagesValues 设置图片
+// map
+func (d *Docx) SetImagesValues(replace map[string]ImgValue) {
+
+	// imgTpl = `<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>`
+
+	tags := d.getVariablesForPart()
+
+	// for k, v := range replace {
+	// 	// delete(map, 键)
+	// }
+
+	fmt.Println(tags)
+	fmt.Println(replace)
+}
+
+//找到所有标签 并且去皮
+func (d *Docx) getVariablesForPart() []string {
+	reg := regexp.MustCompile(`\$\{(.*?)\}`)
+	return reg.FindAllString(d.content, -1)
+}
+
+//修复错误标签
+func (d *Docx) fixBrokenMacros() {
+	re := regexp.MustCompile(`\$(?:\{|[^{$]*\>\{)[^\}\$]*\}`)
+
+	f := func(s string) (src string) {
+		re, _ = regexp.Compile(`<[\S\s]+?>`)
+		src = re.ReplaceAllString(s, "")
+		return
+	}
+	d.content = re.ReplaceAllStringFunc(d.content, f)
 }
