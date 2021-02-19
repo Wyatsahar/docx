@@ -4,7 +4,7 @@ The following constitutes the bare minimum required to replace text in DOCX docu
 ``` go
 
 import (
-	"github.com/nguyenthenguyen/docx"
+	"github.com/wyatsahar/docx"
 )
 
 func main() {
@@ -27,6 +27,11 @@ func main() {
 	docx2 := r.Editable()
 	docx2.Replace("old_2_1", "new_2_1", -1)
 	docx2.Replace("old_2_2", "new_2_2", -1)
+    //clone 表格中的行 复制次
+    docx2.CloneRow("${img}", 5) 
+    |--|--|--|
+    |${img}|${name}|${age}|
+    
 	docx2.WriteToFile("./new_result_2.docx")
 
 	// Or write to ioWriter
@@ -36,3 +41,35 @@ func main() {
 }
 
 ```
+
+
+
+增加cloneRow
+
+| 编号  | 姓名    | 年龄   |
+| ----- | ------- | ------ |
+| ${id} | ${name} | ${age} |
+
+```go
+import (
+	"github.com/wyatsahar/docx"
+)
+
+func main() {
+	r, _ := docx.ReadDocxFile("test.docx")
+	b := r.Editable()
+	b.CloneRow("${id}", 3)
+//	b.Replace(`${img#0}`, "test", -1)
+//	b.Replace(`${img#1}`, "test1", -1)
+//	b.Replace(`${img#2}`, "test2", -1)
+	b.WriteToFile("./new_result_2.docx")
+	r.Close()
+}
+```
+
+| 编号    | 姓名      | 年龄     |
+| ------- | --------- | -------- |
+| ${id#0} | ${name#0} | ${age#0} |
+| ${id#1} | ${name#1} | ${age#1} |
+| ${id#2} | ${name#2} | ${age#2} |
+
