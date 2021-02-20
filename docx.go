@@ -6,12 +6,10 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -390,106 +388,16 @@ func (d *Docx) SetValue(replaceMap map[string]string) {
 	}
 }
 
-//设置标记
-func ensureMacroCompleted(mark string) string {
-	tmp := []rune(mark)
-	star := tmp[:2]
-	if string(star) != `${` && string(tmp[len(tmp)-1]) != `}` {
-		return `${` + mark + `}`
-	}
-	return mark
-}
-
-func findRowStart(docx *Docx, offset int) (rowStart int) {
-	temp := []byte(docx.content)[:offset]
-	rowStart = strings.LastIndex(string(temp), `<w:tr `)
-	if rowStart == -1 {
-		rowStart = strings.LastIndex(string(temp), `<w:tr>`)
-	}
-	if rowStart == -1 {
-		panic("clone row , no find row start ")
-	}
-	return
-}
-
-func findRowEnd(docx *Docx, offset int) (rowEnd int) {
-
-	rowEnd = strings.Index(string([]byte(docx.content)[offset:]), `</w:tr>`)
-
-	return rowEnd + offset + 7
-}
-
-func getRow(docx *Docx, startPosition, endPosition int) (content string) {
-	if endPosition == -1 {
-		endPosition = len(docx.content)
-	}
-	contentTemp := []byte(docx.content)
-	content = string(contentTemp[startPosition:endPosition])
-	return
-}
-
-func indexClonedVariables(xmlRow, mark string, n int) string {
-	var bt bytes.Buffer
-	// var markTemp string
-	reg := regexp.MustCompile(`\$\{(.*?)\}`)
-
-	for i := 0; i < n; i++ {
-		bt.WriteString(reg.ReplaceAllString(xmlRow, "${$1#"+strconv.Itoa(i)+`}`))
-	}
-	return bt.String()
-}
-
-//CloneRow 复制行 (标记 行数)
-func (d *Docx) CloneRow(mark string, n int) {
-	var tempxml []string
-	var bt bytes.Buffer
-	// //设置标记
-	mark = ensureMacroCompleted(mark)
-	//查询第一次出现的地方
-	tagPos := strings.Index(d.content, mark)
-
-	//查找标记点开始行标签
-	rowStart := findRowStart(d, tagPos)
-	//查找标记点结束行标签
-	rowEnd := findRowEnd(d, tagPos)
-
-	xmlRow := getRow(d, rowStart, rowEnd)
-	tempxml = append(tempxml, getRow(d, 0, rowStart))
-	tempxml = append(tempxml, indexClonedVariables(xmlRow, mark, n))
-	tempxml = append(tempxml, getRow(d, rowEnd, len(d.content)))
-	for _, v := range tempxml {
-		bt.WriteString(v)
-	}
-	d.content = bt.String()
-}
-
-//ImgValue 结构体
-type ImgValue struct {
-	Path   string
-	Weight uint
-	Height uint
-}
-
-// SetImagesValues 设置图片
-// map
-func (d *Docx) SetImagesValues(replace map[string]ImgValue) {
-
-	// imgTpl = `<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>`
-
-	tags := d.getVariablesForPart()
-
-	// for k, v := range replace {
-	// 	// delete(map, 键)
-	// }
-
-	fmt.Println(tags)
-	fmt.Println(replace)
-}
-
 //找到所有标签 并且去皮
-func (d *Docx) getVariablesForPart() []string {
+func (d *Docx) getVariablesForPart(search string) []string {
+	total := []string{}
+
 	reg := regexp.MustCompile(`\$\{(.*?)\}`)
-	return reg.FindAllString(d.content, -1)
+	contentlabel := reg.FindAllStringSubmatch(search, -1)
+	for _, v := range contentlabel {
+		total = append(total, v[1])
+	}
+	return total
 }
 
 //修复错误标签
@@ -501,5 +409,18 @@ func (d *Docx) fixBrokenMacros() {
 		src = re.ReplaceAllString(s, "")
 		return
 	}
+	//修复 content
 	d.content = re.ReplaceAllStringFunc(d.content, f)
+	//修复 footers
+	if len(d.footers) != 0 {
+		for k, v := range d.footers {
+			d.footers[k] = re.ReplaceAllStringFunc(v, f)
+		}
+	}
+	//修复 headers
+	if len(d.headers) != 0 {
+		for k, v := range d.headers {
+			d.headers[k] = re.ReplaceAllStringFunc(v, f)
+		}
+	}
 }
