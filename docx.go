@@ -6,12 +6,24 @@ import (
 	"bytes"
 	"encoding/xml"
 	"errors"
-	"io"
+	"fmt"
 	"io/ioutil"
-	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"unsafe"
 )
+
+//Docx 文档
+type Docx struct {
+	MainPart     string
+	SettingsPart string
+	ContentTypes string
+	Headers      map[int]string
+	Footers      map[int]string
+	Relations    map[string]string
+	// NewImages    map[string]string
+}
 
 //ZipData Contains functions to work with data from a zip file
 type ZipData interface {
@@ -19,354 +31,56 @@ type ZipData interface {
 	close() error
 }
 
-//ZipInMemory Type for in memory zip files
-type ZipInMemory struct {
-	data *zip.Reader
+//ZipBuffer zip buffer
+type ZipBuffer struct {
+	rc *zip.ReadCloser
 }
 
-func (d ZipInMemory) files() []*zip.File {
-	return d.data.File
+func (b ZipBuffer) files() []*zip.File {
+	return b.rc.File
 }
 
-//Since there is nothing to close for in memory, just nil the data and return nil
-func (d ZipInMemory) close() error {
-	d.data = nil
-	return nil
+//Close 关闭
+func (b ZipBuffer) Close() error {
+	return b.rc.Close()
 }
 
-//ZipFile Type for zip files read from disk
-type ZipFile struct {
-	data *zip.ReadCloser
-}
+//LoadInit 初始化Docx
+func LoadInit(path string) (*Docx, *ZipBuffer) {
+	// func LoadInit(path string) {
+	//打开zip文件
+	rc, _ := zip.OpenReader(path)
 
-func (d ZipFile) files() []*zip.File {
-	return d.data.File
-}
+	b := ZipBuffer{rc}
+	Relations := make(map[string]string)
+	MainPart := b.getTempDocumentMainPart(Relations)
+	Headers := b.getTempDocumentHeaders(Relations)
+	Footers := b.getTempDocumentFooters(Relations)
+	SettingsPart := b.getTempDocumentSettingsPart(Relations)
+	ContentTypes := b.getTempDocumentContentTypes(Relations)
 
-func (d ZipFile) close() error {
-	return d.data.Close()
-}
-
-//ReplaceDocx docx 文档
-type ReplaceDocx struct {
-	zipReader ZipData
-	content   string
-	links     string
-	headers   map[string]string
-	footers   map[string]string
-}
-
-//Open 打开word
-func Open(file string) (*Docx, *ReplaceDocx) {
-	r, err := ReadDocxFile(file)
-	if err != nil {
-		panic(err)
-	}
-	docx := r.Editable()
-	//修复错误标签
-	docx.fixBrokenMacros()
-
-	return docx, r
-}
-
-//Editable 初始化
-func (r *ReplaceDocx) Editable() *Docx {
 	return &Docx{
-		files:   r.zipReader.files(),
-		content: r.content,
-		links:   r.links,
-		headers: r.headers,
-		footers: r.footers,
-	}
+		MainPart:     MainPart,
+		Headers:      Headers,
+		Footers:      Footers,
+		Relations:    Relations,
+		SettingsPart: SettingsPart,
+		ContentTypes: ContentTypes,
+	}, &b
 }
 
-//Close 关闭资源文件
-func (r *ReplaceDocx) Close() error {
-	return r.zipReader.close()
-}
-
-//Docx 结构体
-type Docx struct {
-	files   []*zip.File
-	content string
-	links   string
-	headers map[string]string
-	footers map[string]string
-}
-
-//GetContent 获取内容
-func (d *Docx) GetContent() string {
-	return d.content
-}
-
-//SetContent 设置内容
-func (d *Docx) SetContent(content string) {
-	d.content = content
-}
-
-//ReplaceRaw 直接替换
-func (d *Docx) ReplaceRaw(oldString string, newString string, num int) {
-	d.content = strings.Replace(d.content, oldString, newString, num)
-}
-
-//Replace 替换内容
-func (d *Docx) Replace(oldString string, newString string, num int) (err error) {
-	oldString, err = encode(oldString)
+//SetValue 替换文本
+func (d *Docx) SetValue(search, replace string, limit int) error {
+	encodeSearch, err := encode(search)
 	if err != nil {
 		return err
 	}
-	newString, err = encode(newString)
+	encodeReplace, err := encode(replace)
 	if err != nil {
 		return err
 	}
-	d.content = strings.Replace(d.content, oldString, newString, num)
-
+	d.setValueForPart(encodeSearch, encodeReplace, limit)
 	return nil
-}
-
-//ReplaceLink 替换连接
-func (d *Docx) ReplaceLink(oldString string, newString string, num int) (err error) {
-	oldString, err = encode(oldString)
-	if err != nil {
-		return err
-	}
-	newString, err = encode(newString)
-	if err != nil {
-		return err
-	}
-	d.links = strings.Replace(d.links, oldString, newString, num)
-
-	return nil
-}
-
-//ReplaceHeader 替换head
-func (d *Docx) ReplaceHeader(oldString string, newString string) (err error) {
-	return replaceHeaderFooter(d.headers, oldString, newString)
-}
-
-//ReplaceFooter 替换word foot
-func (d *Docx) ReplaceFooter(oldString string, newString string) (err error) {
-	return replaceHeaderFooter(d.footers, oldString, newString)
-}
-
-//WriteToFile 写入文件
-func (d *Docx) WriteToFile(path string) (err error) {
-	var target *os.File
-	target, err = os.Create(path)
-	if err != nil {
-		return
-	}
-	defer target.Close()
-	err = d.Write(target)
-	return
-}
-
-func (d *Docx) Write(ioWriter io.Writer) (err error) {
-	w := zip.NewWriter(ioWriter)
-	for _, file := range d.files {
-		var writer io.Writer
-		var readCloser io.ReadCloser
-
-		writer, err = w.Create(file.Name)
-		if err != nil {
-			return err
-		}
-		readCloser, err = file.Open()
-		if err != nil {
-			return err
-		}
-		if file.Name == "word/document.xml" {
-			writer.Write([]byte(d.content))
-		} else if file.Name == "word/_rels/document.xml.rels" {
-			writer.Write([]byte(d.links))
-		} else if strings.Contains(file.Name, "header") && d.headers[file.Name] != "" {
-			writer.Write([]byte(d.headers[file.Name]))
-		} else if strings.Contains(file.Name, "footer") && d.footers[file.Name] != "" {
-			writer.Write([]byte(d.footers[file.Name]))
-		} else {
-			writer.Write(streamToByte(readCloser))
-		}
-	}
-	w.Close()
-	return
-}
-
-func replaceHeaderFooter(headerFooter map[string]string, oldString string, newString string) (err error) {
-	oldString, err = encode(oldString)
-	if err != nil {
-		return err
-	}
-	newString, err = encode(newString)
-	if err != nil {
-		return err
-	}
-
-	for k := range headerFooter {
-		headerFooter[k] = strings.Replace(headerFooter[k], oldString, newString, -1)
-	}
-
-	return nil
-}
-
-//ReadDocxFromMemory 读取zip
-func ReadDocxFromMemory(data io.ReaderAt, size int64) (*ReplaceDocx, error) {
-	reader, err := zip.NewReader(data, size)
-	if err != nil {
-		return nil, err
-	}
-	zipData := ZipInMemory{data: reader}
-	return readDocx(zipData)
-}
-
-//ReadDocxFile 读取压缩docx文件
-func ReadDocxFile(path string) (*ReplaceDocx, error) {
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return nil, err
-	}
-	zipData := ZipFile{data: reader}
-	return readDocx(zipData)
-}
-func readDocx(reader ZipData) (*ReplaceDocx, error) {
-	content, err := readText(reader.files())
-	if err != nil {
-		return nil, err
-	}
-
-	links, err := readLinks(reader.files())
-	if err != nil {
-		return nil, err
-	}
-
-	headers, footers, _ := readHeaderFooter(reader.files())
-	return &ReplaceDocx{zipReader: reader, content: content, links: links, headers: headers, footers: footers}, nil
-}
-
-func readHeaderFooter(files []*zip.File) (headerText map[string]string, footerText map[string]string, err error) {
-
-	h, f, err := retrieveHeaderFooterDoc(files)
-
-	if err != nil {
-		return map[string]string{}, map[string]string{}, err
-	}
-
-	headerText, err = buildHeaderFooter(h)
-	if err != nil {
-		return map[string]string{}, map[string]string{}, err
-	}
-
-	footerText, err = buildHeaderFooter(f)
-	if err != nil {
-		return map[string]string{}, map[string]string{}, err
-	}
-
-	return headerText, footerText, err
-}
-
-func buildHeaderFooter(headerFooter []*zip.File) (map[string]string, error) {
-
-	headerFooterText := make(map[string]string)
-	for _, element := range headerFooter {
-		documentReader, err := element.Open()
-		if err != nil {
-			return map[string]string{}, err
-		}
-
-		text, err := wordDocToString(documentReader)
-		if err != nil {
-			return map[string]string{}, err
-		}
-
-		headerFooterText[element.Name] = text
-	}
-
-	return headerFooterText, nil
-}
-
-func readText(files []*zip.File) (text string, err error) {
-	var documentFile *zip.File
-	documentFile, err = retrieveWordDoc(files)
-	if err != nil {
-		return text, err
-	}
-	var documentReader io.ReadCloser
-	documentReader, err = documentFile.Open()
-	if err != nil {
-		return text, err
-	}
-
-	text, err = wordDocToString(documentReader)
-	return
-}
-
-func readLinks(files []*zip.File) (text string, err error) {
-	var documentFile *zip.File
-	documentFile, err = retrieveLinkDoc(files)
-	if err != nil {
-		return text, err
-	}
-	var documentReader io.ReadCloser
-	documentReader, err = documentFile.Open()
-	if err != nil {
-		return text, err
-	}
-
-	text, err = wordDocToString(documentReader)
-	return
-}
-
-func wordDocToString(reader io.Reader) (string, error) {
-	b, err := ioutil.ReadAll(reader)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
-
-func retrieveWordDoc(files []*zip.File) (file *zip.File, err error) {
-	for _, f := range files {
-		if f.Name == "word/document.xml" {
-			file = f
-		}
-	}
-	if file == nil {
-		err = errors.New("document.xml file not found")
-	}
-	return
-}
-
-func retrieveLinkDoc(files []*zip.File) (file *zip.File, err error) {
-	for _, f := range files {
-		if f.Name == "word/_rels/document.xml.rels" {
-			file = f
-		}
-	}
-	if file == nil {
-		err = errors.New("document.xml.rels file not found")
-	}
-	return
-}
-
-func retrieveHeaderFooterDoc(files []*zip.File) (headers []*zip.File, footers []*zip.File, err error) {
-	for _, f := range files {
-
-		if strings.Contains(f.Name, "header") {
-			headers = append(headers, f)
-		}
-		if strings.Contains(f.Name, "footer") {
-			footers = append(footers, f)
-		}
-	}
-	if len(headers) == 0 && len(footers) == 0 {
-		err = errors.New("headers[1-3].xml file not found and footers[1-3].xml file not found")
-	}
-	return
-}
-
-func streamToByte(stream io.Reader) []byte {
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(stream)
-	return buf.Bytes()
 }
 
 func encode(s string) (string, error) {
@@ -381,46 +95,152 @@ func encode(s string) (string, error) {
 	return output, nil
 }
 
-//SetValue 批量替换
-func (d *Docx) SetValue(replaceMap map[string]string) {
-	for k, v := range replaceMap {
-		d.Replace(k, v, -1)
+func (d *Docx) setValueForPart(search, replace string, limit int) {
+	if limit <= 0 {
+		limit = -1
+	}
+	strings.Replace(d.MainPart, search, replace, limit)
+
+	for _, header := range d.Headers {
+		strings.Replace(header, search, replace, limit)
+	}
+	for _, footer := range d.Footers {
+		strings.Replace(footer, search, replace, limit)
 	}
 }
 
-//找到所有标签 并且去皮
-func (d *Docx) getVariablesForPart(search string) []string {
-	total := []string{}
-
-	reg := regexp.MustCompile(`\$\{(.*?)\}`)
-	contentlabel := reg.FindAllStringSubmatch(search, -1)
-	for _, v := range contentlabel {
-		total = append(total, v[1])
-	}
-	return total
+func (b *ZipBuffer) readPartWithRels(fileName string) string {
+	return b.getFromName(getRelationsName(fileName))
 }
 
-//修复错误标签
-func (d *Docx) fixBrokenMacros() {
-	re := regexp.MustCompile(`\$(?:\{|[^{$]*\>\{)[^\}\$]*\}`)
+func (b *ZipBuffer) getTempDocumentFooters(relations map[string]string) map[int]string {
+	footers := make(map[int]string)
+	for i := 1; b.locateName(getFooterName(i)) > 0; i++ {
+		footerName := getFooterName(i)
+		footer := b.getFromName(getFooterName(i))
+		footers[i] = footer
+		if footer != "" {
+			relations[footerName] = b.readPartWithRels(footerName)
+		}
+	}
 
-	f := func(s string) (src string) {
-		re, _ = regexp.Compile(`<[\S\s]+?>`)
-		src = re.ReplaceAllString(s, "")
-		return
+	return footers
+}
+
+func (b *ZipBuffer) getTempDocumentHeaders(relations map[string]string) map[int]string {
+	headers := make(map[int]string)
+	for i := 1; b.locateName(getHeaderName(i)) > 0; i++ {
+		headerName := getHeaderName(i)
+		header := b.getFromName(headerName)
+		headers[i] = header
+		if header != "" {
+			relations[headerName] = b.readPartWithRels(headerName)
+		}
+
 	}
-	//修复 content
-	d.content = re.ReplaceAllStringFunc(d.content, f)
-	//修复 footers
-	if len(d.footers) != 0 {
-		for k, v := range d.footers {
-			d.footers[k] = re.ReplaceAllStringFunc(v, f)
+	return headers
+}
+
+func (b *ZipBuffer) getTempDocumentMainPart(relations map[string]string) (s string) {
+	mainPartName := b.getMainPartName()
+	relations[mainPartName] = b.readPartWithRels(mainPartName)
+	return b.getFromName(mainPartName)
+}
+
+func (b *ZipBuffer) getTempDocumentContentTypes(relations map[string]string) string {
+	contentTypesName := getDocumentContentTypesName()
+	relations[contentTypesName] = b.readPartWithRels(contentTypesName)
+	return b.getFromName(contentTypesName)
+}
+
+func (b *ZipBuffer) getTempDocumentSettingsPart(relations map[string]string) string {
+	settingName := getSettingsPartName()
+	relations[settingName] = b.readPartWithRels(settingName)
+	return b.getFromName(settingName)
+
+}
+
+func getRelationsName(s string) string {
+	return StringBuilder("word/_rels/", filepath.Base(s), ".rels")
+}
+
+//定位位置
+func (b *ZipBuffer) locateName(s string) int {
+	for k, file := range b.files() {
+		if file.Name == s {
+			return k
 		}
 	}
-	//修复 headers
-	if len(d.headers) != 0 {
-		for k, v := range d.headers {
-			d.headers[k] = re.ReplaceAllStringFunc(v, f)
-		}
+	return -1
+}
+
+//通过定位读取zip文件
+func (b *ZipBuffer) readFileWithIndex(index int) (string, error) {
+	if index == -1 {
+		return "", nil
 	}
+	rc, err := b.files()[index].Open()
+	if err != nil {
+		return "", errors.New("func : readfile , zip文件打开失败")
+	}
+	content, err := ioutil.ReadAll(rc)
+	if err != nil {
+		return "", errors.New("func : readfile , zip读取打开失败")
+	}
+	return StringBuilder(ByteToString(content)), nil
+}
+
+//获取内容
+func (b *ZipBuffer) getFromName(s string) string {
+	index := b.locateName(s)
+	res, _ := b.readFileWithIndex(index)
+	return res
+}
+
+//header名称
+func getHeaderName(index int) string {
+	return fmt.Sprintf("word/header%d.xml", index)
+}
+
+//footer名
+func getFooterName(index int) string {
+	return fmt.Sprintf("word/footer%d.xml", index)
+}
+
+//setting名
+func getSettingsPartName() string {
+	return "word/settings.xml"
+}
+
+//contentTypes 名
+func getDocumentContentTypesName() string {
+	return "[Content_Types].xml"
+}
+
+//主体word 名称
+func (b *ZipBuffer) getMainPartName() (mainPartName string) {
+	c := b.getFromName(getDocumentContentTypesName())
+	reg := regexp.MustCompile(`PartName="\/(word\/document.*?\.xml)" ContentType="application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document\.main\+xml"`)
+	res := reg.FindStringSubmatch(c)
+	if len(res) > 1 {
+		mainPartName = res[1]
+	} else {
+		mainPartName = "word/document.xml"
+	}
+
+	return mainPartName
+}
+
+//ByteToString 字节转字符串
+func ByteToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
+//StringBuilder 字符串拼接
+func StringBuilder(s ...string) string {
+	var buf bytes.Buffer
+	for _, v := range s {
+		buf.WriteString(v)
+	}
+	return buf.String()
 }
