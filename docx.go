@@ -7,8 +7,11 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"unsafe"
@@ -16,12 +19,16 @@ import (
 
 //Docx 文档
 type Docx struct {
-	MainPart     string
-	SettingsPart string
-	ContentTypes string
-	Headers      map[int]string
-	Footers      map[int]string
-	Relations    map[string]string
+	files            []*zip.File
+	MainPart         string
+	MainPartName     string
+	SettingsPart     string
+	SettingsPartName string
+	ContentTypes     string
+	ContentTypesName string
+	Headers          map[int]string
+	Footers          map[int]string
+	Relations        map[string]string
 	// NewImages    map[string]string
 }
 
@@ -36,12 +43,12 @@ type ZipBuffer struct {
 	rc *zip.ReadCloser
 }
 
-func (b ZipBuffer) files() []*zip.File {
+func (b *ZipBuffer) files() []*zip.File {
 	return b.rc.File
 }
 
 //Close 关闭
-func (b ZipBuffer) Close() error {
+func (b *ZipBuffer) Close() error {
 	return b.rc.Close()
 }
 
@@ -53,24 +60,99 @@ func LoadInit(path string) (*Docx, *ZipBuffer) {
 
 	b := ZipBuffer{rc}
 	Relations := make(map[string]string)
-	MainPart := b.getTempDocumentMainPart(Relations)
 	Headers := b.getTempDocumentHeaders(Relations)
 	Footers := b.getTempDocumentFooters(Relations)
-	SettingsPart := b.getTempDocumentSettingsPart(Relations)
-	ContentTypes := b.getTempDocumentContentTypes(Relations)
+	MainPartName, MainPart := b.getTempDocumentMainPart(Relations)
+	SettingsPartName, SettingsPart := b.getTempDocumentSettingsPart(Relations)
+	ContentTypesName, ContentTypes := b.getTempDocumentContentTypes(Relations)
 
 	return &Docx{
-		MainPart:     MainPart,
-		Headers:      Headers,
-		Footers:      Footers,
-		Relations:    Relations,
-		SettingsPart: SettingsPart,
-		ContentTypes: ContentTypes,
+		files:            b.files(),
+		Headers:          Headers,
+		Footers:          Footers,
+		Relations:        Relations,
+		MainPartName:     MainPartName,
+		MainPart:         MainPart,
+		SettingsPart:     SettingsPart,
+		SettingsPartName: SettingsPartName,
+		ContentTypes:     ContentTypes,
+		ContentTypesName: ContentTypesName,
 	}, &b
 }
 
-//SetValue 替换文本
-func (d *Docx) SetValue(search, replace string, limit int) error {
+//SaveToFile 保存文件
+func (d *Docx) SaveToFile(path string) (err error) {
+	var target *os.File
+	target, err = os.Create(path)
+	wr := zip.NewWriter(target)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range d.files {
+		fmt.Println(k)
+		fmt.Println(v)
+	}
+
+	for index, header := range d.Headers {
+		d.savePartWithRels(wr, getHeaderName(index), header)
+	}
+
+	d.savePartWithRels(wr, d.MainPartName, d.MainPart)
+	d.savePartWithRels(wr, d.SettingsPartName, d.SettingsPart)
+	d.savePartWithRels(wr, d.ContentTypesName, d.ContentTypes)
+
+	for index, footer := range d.Footers {
+		d.savePartWithRels(wr, getFooterName(index), footer)
+	}
+
+	wr.Close()
+	return nil
+}
+
+func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
+	writer, err := wr.Create(filename)
+	if err != nil {
+		return err
+	}
+	io.WriteString(writer, xml)
+	if _, ok := d.Relations[filename]; ok {
+		relsFileName := getRelationsName(filename)
+		relsWriter, err := wr.Create(relsFileName)
+		if err != nil {
+			return err
+		}
+		io.WriteString(relsWriter, d.Relations[filename])
+	}
+	return nil
+}
+
+/*
+SetValue 替换文本
+	(d *Docx) SetValue( map[search]replace )
+	(d *Docx) SetValue( search string, replace string)
+*/
+func (d *Docx) SetValue(s ...interface{}) error {
+	if len(s) != 2 {
+		return errors.New("参数长度错误")
+	}
+	//如果第一个参数为map
+	// 使用  map[string]string 来替换
+	if reflect.TypeOf(s[0]).Kind() == reflect.Map {
+		for search, replace := range s[0].(map[string]string) {
+			d.replace(search, replace, -1)
+		}
+	} else if reflect.TypeOf(s[0]).Kind() == reflect.String && reflect.TypeOf(s[1]).Kind() == reflect.String {
+		d.replace(s[0].(string), s[1].(string), -1)
+	} else {
+		return errors.New("参数错误")
+	}
+
+	return nil
+}
+
+//replace 替换文本
+func (d *Docx) replace(search, replace string, limit int) error {
 	encodeSearch, err := encode(search)
 	if err != nil {
 		return err
@@ -99,13 +181,14 @@ func (d *Docx) setValueForPart(search, replace string, limit int) {
 	if limit <= 0 {
 		limit = -1
 	}
-	strings.Replace(d.MainPart, search, replace, limit)
 
-	for _, header := range d.Headers {
-		strings.Replace(header, search, replace, limit)
+	d.MainPart = strings.Replace(d.MainPart, search, replace, limit)
+
+	for headerIndex, header := range d.Headers {
+		d.Headers[headerIndex] = strings.Replace(header, search, replace, limit)
 	}
-	for _, footer := range d.Footers {
-		strings.Replace(footer, search, replace, limit)
+	for footerIndex, footer := range d.Footers {
+		d.Footers[footerIndex] = strings.Replace(footer, search, replace, limit)
 	}
 }
 
@@ -134,6 +217,7 @@ func (b *ZipBuffer) getTempDocumentHeaders(relations map[string]string) map[int]
 		header := b.getFromName(headerName)
 		headers[i] = header
 		if header != "" {
+			delete(relations, headerName)
 			relations[headerName] = b.readPartWithRels(headerName)
 		}
 
@@ -141,22 +225,32 @@ func (b *ZipBuffer) getTempDocumentHeaders(relations map[string]string) map[int]
 	return headers
 }
 
-func (b *ZipBuffer) getTempDocumentMainPart(relations map[string]string) (s string) {
+func (b *ZipBuffer) getTempDocumentMainPart(relations map[string]string) (name, s string) {
 	mainPartName := b.getMainPartName()
 	relations[mainPartName] = b.readPartWithRels(mainPartName)
-	return b.getFromName(mainPartName)
+	return mainPartName, b.getFromName(mainPartName)
 }
 
-func (b *ZipBuffer) getTempDocumentContentTypes(relations map[string]string) string {
+func (b *ZipBuffer) getTempDocumentContentTypes(relations map[string]string) (name, s string) {
 	contentTypesName := getDocumentContentTypesName()
-	relations[contentTypesName] = b.readPartWithRels(contentTypesName)
-	return b.getFromName(contentTypesName)
+	typeRelsContent := b.readPartWithRels(contentTypesName)
+	if typeRelsContent == "" {
+		delete(relations, contentTypesName)
+		relations[contentTypesName] = b.readPartWithRels(contentTypesName)
+	}
+
+	return contentTypesName, b.getFromName(contentTypesName)
 }
 
-func (b *ZipBuffer) getTempDocumentSettingsPart(relations map[string]string) string {
+func (b *ZipBuffer) getTempDocumentSettingsPart(relations map[string]string) (name, s string) {
 	settingName := getSettingsPartName()
-	relations[settingName] = b.readPartWithRels(settingName)
-	return b.getFromName(settingName)
+	settingRelsContent := b.readPartWithRels(settingName)
+	if settingRelsContent == "" {
+		delete(relations, settingName)
+		relations[settingName] = settingRelsContent
+	}
+
+	return settingName, b.getFromName(settingName)
 
 }
 
