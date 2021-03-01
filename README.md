@@ -1,8 +1,12 @@
+
+
 ## A simple go (golang) Microsoft Word (. Docx) tool library
 
 ### 一个简单的golang Word操作库
 
-使用例子
+
+
+#### 替换文本
 
 ```go
 
@@ -11,28 +15,31 @@ import (
 )
 
 func main() {
-	d, rc := docx.LoadInit("./test.docx")
-    
-    //批量替换 ${search}
-	var a = make(map[string]string)
-	a["search"] = "replace"
-    d.SetValue(a)
-    //单独替换  ${search1}
-	d.SetValue("search1", "replace1")
-
-	d.SaveToFile("./new_result_2.docx")
-
+	//载入word
+	doc, rc := docx.LoadInit("./document_test.docx")
+	//批量文本替换
+	var data = make(map[string]string)
+	data["search"] = "批量替换"
+	data["search1"] = "批量替换"
+	doc.SetValue(data)
+	//单独文本替换
+	doc.SetValue("search2", "单独替换")
+    //保存文件
+	doc.SaveToFile("./new_result_2.docx")
+	//关闭资源
 	rc.Close()
 }
 
 ```
 
-增加cloneRow
+#### 复制行
+
+​	CloneRow(mark,num)
 
 
-| 编号 | 姓名 | 年龄 |
-| - | - | - |
-| ${id} | ${name} | ${age} |
+| 编号 | 姓名 |
+| - | - |
+| ${id} | ${name} |
 
 ```go
 import (
@@ -40,20 +47,29 @@ import (
 )
 
 func main() {
-	r, _ := docx.ReadDocxFile("test.docx")
-	b := r.Editable()
-	b.CloneRow("${id}", 3)
-//	b.Replace(`${img#0}`, "test", -1)
-//	b.Replace(`${img#1}`, "test1", -1)
-//	b.Replace(`${img#2}`, "test2", -1)
-	b.WriteToFile("./new_result_2.docx")
-	r.Close()
+    //载入word
+	doc, rc := docx.LoadInit("./document_test.docx")
+	//复制行
+	doc.CloneRow("id", 3)
+	//替换复制行后的标签
+	var data1 = make(map[string]string)
+	data1["id#0"] = "1"
+	data1["name#0"] = "张三"
+	data1["id#1"] = "2"
+	data1["name#1"] = "李四"
+	data1["id#2"] = "3"
+	data1["name#2"] = "王五"
+	doc.SetValue(data1)
+    //保存文件
+	doc.SaveToFile("./new_result_2.docx")
+	//关闭资源
+	rc.Close()
 }
 ```
 
 
-| 编号 | 姓名 | 年龄 |
-| - | - | - |
-| ${id#0} | ${name#0} | ${age#0} |
-| ${id#1} | ${name#1} | ${age#1} |
-| ${id#2} | ${name#2} | ${age#2} |
+| 编号 | 姓名 |
+| - | - |
+| 1 | 张三 |
+| 2 | 李四 |
+| 3 | 王五 |
