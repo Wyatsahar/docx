@@ -7,7 +7,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -19,7 +18,7 @@ import (
 
 //Docx 文档
 type Docx struct {
-	files            []*zip.File
+	ZipBuffer        *ZipBuffer
 	MainPart         string
 	MainPartName     string
 	SettingsPart     string
@@ -58,7 +57,9 @@ func LoadInit(path string) (*Docx, *ZipBuffer) {
 	//打开zip文件
 	rc, _ := zip.OpenReader(path)
 
+	//把zip复制一份
 	b := ZipBuffer{rc}
+
 	Relations := make(map[string]string)
 	Headers := b.getTempDocumentHeaders(Relations)
 	Footers := b.getTempDocumentFooters(Relations)
@@ -67,7 +68,7 @@ func LoadInit(path string) (*Docx, *ZipBuffer) {
 	ContentTypesName, ContentTypes := b.getTempDocumentContentTypes(Relations)
 
 	return &Docx{
-		files:            b.files(),
+		ZipBuffer:        &b,
 		Headers:          Headers,
 		Footers:          Footers,
 		Relations:        Relations,
@@ -82,48 +83,78 @@ func LoadInit(path string) (*Docx, *ZipBuffer) {
 
 //SaveToFile 保存文件
 func (d *Docx) SaveToFile(path string) (err error) {
-	var target *os.File
-	target, err = os.Create(path)
-	wr := zip.NewWriter(target)
+	w, err := os.Create(path)
+	wr := zip.NewWriter(w)
 	if err != nil {
 		return err
 	}
 
-	for k, v := range d.files {
-		fmt.Println(k)
-		fmt.Println(v)
-	}
+	for _, file := range d.ZipBuffer.files() {
+		xml := d.ZipBuffer.getFromName(file.Name)
+		for headerIndex, header := range d.Headers {
+			if file.Name == getHeaderName(headerIndex) {
+				xml = header
+			}
+		}
 
-	for index, header := range d.Headers {
-		d.savePartWithRels(wr, getHeaderName(index), header)
-	}
+		for footerIndex, footer := range d.Footers {
+			if file.Name == getFooterName(footerIndex) {
+				xml = footer
+			}
+		}
 
-	d.savePartWithRels(wr, d.MainPartName, d.MainPart)
-	d.savePartWithRels(wr, d.SettingsPartName, d.SettingsPart)
-	d.savePartWithRels(wr, d.ContentTypesName, d.ContentTypes)
+		if file.Name == d.SettingsPartName {
+			xml = d.SettingsPart
+		}
 
-	for index, footer := range d.Footers {
-		d.savePartWithRels(wr, getFooterName(index), footer)
+		if file.Name == d.MainPartName && d.MainPart != "" {
+			xml = d.MainPart
+		}
+
+		if file.Name == d.ContentTypes && d.ContentTypes != "" {
+			xml = d.ContentTypes
+		}
+
+		err := d.savePartWithRels(wr, file.Name, xml)
+		if err != nil {
+			fmt.Println(err.Error())
+		}
 	}
 
 	wr.Close()
+	w.Close()
 	return nil
 }
 
 func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
+	// if xml == "" {
+	// 	fmt.Println(xml)
+	// }
+
 	writer, err := wr.Create(filename)
 	if err != nil {
+		fmt.Println(filename)
 		return err
 	}
-	io.WriteString(writer, xml)
-	if _, ok := d.Relations[filename]; ok {
+
+	_, err = writer.Write([]byte(xml))
+	if err != nil {
+		fmt.Println(filename)
+		return err
+	}
+
+	if v, ok := d.Relations[filename]; ok {
 		relsFileName := getRelationsName(filename)
 		relsWriter, err := wr.Create(relsFileName)
 		if err != nil {
-			return err
+			return errors.New("create error")
 		}
-		io.WriteString(relsWriter, d.Relations[filename])
+		_, err = relsWriter.Write([]byte(v))
+		if err != nil {
+			return errors.New("relsWriter error")
+		}
 	}
+
 	return nil
 }
 
@@ -133,9 +164,10 @@ SetValue 替换文本
 	(d *Docx) SetValue( search string, replace string)
 */
 func (d *Docx) SetValue(s ...interface{}) error {
-	if len(s) != 2 {
+	if len(s) != 2 && len(s) != 1 {
 		return errors.New("参数长度错误")
 	}
+
 	//如果第一个参数为map
 	// 使用  map[string]string 来替换
 	if reflect.TypeOf(s[0]).Kind() == reflect.Map {
@@ -153,10 +185,11 @@ func (d *Docx) SetValue(s ...interface{}) error {
 
 //replace 替换文本
 func (d *Docx) replace(search, replace string, limit int) error {
-	encodeSearch, err := encode(search)
+	encodeSearch, err := encode(StringBuilder("${", search, "}"))
 	if err != nil {
 		return err
 	}
+
 	encodeReplace, err := encode(replace)
 	if err != nil {
 		return err
@@ -181,7 +214,6 @@ func (d *Docx) setValueForPart(search, replace string, limit int) {
 	if limit <= 0 {
 		limit = -1
 	}
-
 	d.MainPart = strings.Replace(d.MainPart, search, replace, limit)
 
 	for headerIndex, header := range d.Headers {
@@ -202,7 +234,9 @@ func (b *ZipBuffer) getTempDocumentFooters(relations map[string]string) map[int]
 		footerName := getFooterName(i)
 		footer := b.getFromName(getFooterName(i))
 		footers[i] = footer
-		if footer != "" {
+		if footer == "" {
+			delete(relations, footerName)
+		} else {
 			relations[footerName] = b.readPartWithRels(footerName)
 		}
 	}
@@ -216,8 +250,9 @@ func (b *ZipBuffer) getTempDocumentHeaders(relations map[string]string) map[int]
 		headerName := getHeaderName(i)
 		header := b.getFromName(headerName)
 		headers[i] = header
-		if header != "" {
+		if header == "" {
 			delete(relations, headerName)
+		} else {
 			relations[headerName] = b.readPartWithRels(headerName)
 		}
 
@@ -236,6 +271,7 @@ func (b *ZipBuffer) getTempDocumentContentTypes(relations map[string]string) (na
 	typeRelsContent := b.readPartWithRels(contentTypesName)
 	if typeRelsContent == "" {
 		delete(relations, contentTypesName)
+	} else {
 		relations[contentTypesName] = b.readPartWithRels(contentTypesName)
 	}
 
@@ -247,6 +283,7 @@ func (b *ZipBuffer) getTempDocumentSettingsPart(relations map[string]string) (na
 	settingRelsContent := b.readPartWithRels(settingName)
 	if settingRelsContent == "" {
 		delete(relations, settingName)
+	} else {
 		relations[settingName] = settingRelsContent
 	}
 
@@ -337,4 +374,13 @@ func StringBuilder(s ...string) string {
 		buf.WriteString(v)
 	}
 	return buf.String()
+}
+
+func findStrInSlice(slice []string, val string) int {
+	for i, item := range slice {
+		if item == val {
+			return i
+		}
+	}
+	return -1
 }

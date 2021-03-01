@@ -12,10 +12,13 @@ import (
 
 func main() {
 	d, rc := docx.LoadInit("./test.docx")
+    
+    //批量替换 ${search}
 	var a = make(map[string]string)
-	a["被替换字符串"] = "新字符串"
-        d.SetValue(a)
-	d.SetValue("被替换字符串1", "新字符串1")
+	a["search"] = "replace"
+    d.SetValue(a)
+    //单独替换  ${search1}
+	d.SetValue("search1", "replace1")
 
 	d.SaveToFile("./new_result_2.docx")
 

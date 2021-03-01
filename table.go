@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-func findRowStart(docx *Docx, offset int) (rowStart int) {
-	temp := []byte(docx.content)[:offset]
+func findRowStart(d *Docx, offset int) (rowStart int) {
+	temp := []byte(d.MainPart)[:offset]
 	rowStart = strings.LastIndex(string(temp), `<w:tr `)
 	if rowStart == -1 {
 		rowStart = strings.LastIndex(string(temp), `<w:tr>`)
@@ -19,18 +19,18 @@ func findRowStart(docx *Docx, offset int) (rowStart int) {
 	return
 }
 
-func findRowEnd(docx *Docx, offset int) (rowEnd int) {
+func findRowEnd(d *Docx, offset int) (rowEnd int) {
 
-	rowEnd = strings.Index(string([]byte(docx.content)[offset:]), `</w:tr>`)
+	rowEnd = strings.Index(string([]byte(d.MainPart)[offset:]), `</w:tr>`)
 
 	return rowEnd + offset + 7
 }
 
-func getRow(docx *Docx, startPosition, endPosition int) (content string) {
+func getRow(d *Docx, startPosition, endPosition int) (content string) {
 	if endPosition == -1 {
-		endPosition = len(docx.content)
+		endPosition = len(d.MainPart)
 	}
-	contentTemp := []byte(docx.content)
+	contentTemp := []byte(d.MainPart)
 	content = string(contentTemp[startPosition:endPosition])
 	return
 }
@@ -47,7 +47,6 @@ func ensureMacroCompleted(mark string) string {
 
 func indexClonedVariables(xmlRow, mark string, n int) string {
 	var bt bytes.Buffer
-	// var markTemp string
 	reg := regexp.MustCompile(`\$\{(.*?)\}`)
 
 	for i := 0; i < n; i++ {
@@ -63,7 +62,7 @@ func (d *Docx) CloneRow(mark string, n int) {
 	// //设置标记
 	mark = ensureMacroCompleted(mark)
 	//查询第一次出现的地方
-	tagPos := strings.Index(d.content, mark)
+	tagPos := strings.Index(d.MainPart, mark)
 
 	//查找标记点开始行标签
 	rowStart := findRowStart(d, tagPos)
@@ -73,9 +72,9 @@ func (d *Docx) CloneRow(mark string, n int) {
 	xmlRow := getRow(d, rowStart, rowEnd)
 	tempxml = append(tempxml, getRow(d, 0, rowStart))
 	tempxml = append(tempxml, indexClonedVariables(xmlRow, mark, n))
-	tempxml = append(tempxml, getRow(d, rowEnd, len(d.content)))
+	tempxml = append(tempxml, getRow(d, rowEnd, len(d.MainPart)))
 	for _, v := range tempxml {
 		bt.WriteString(v)
 	}
-	d.content = bt.String()
+	d.MainPart = bt.String()
 }
