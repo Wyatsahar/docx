@@ -13,9 +13,6 @@ func findRowStart(d *Docx, offset int) (rowStart int) {
 	if rowStart == -1 {
 		rowStart = strings.LastIndex(string(temp), `<w:tr>`)
 	}
-	if rowStart == -1 {
-		panic("clone row , no find row start ")
-	}
 	return
 }
 

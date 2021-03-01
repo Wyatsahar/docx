@@ -53,7 +53,13 @@ func (b *ZipBuffer) Close() error {
 
 //LoadInit 初始化Docx
 func LoadInit(path string) (*Docx, *ZipBuffer) {
-	// func LoadInit(path string) {
+	d, rc := getDocx(path)
+	//整理错误标签
+	d.fixBrokenMacros()
+	return d, rc
+}
+
+func getDocx(path string) (*Docx, *ZipBuffer) {
 	//打开zip文件
 	rc, _ := zip.OpenReader(path)
 
@@ -127,10 +133,6 @@ func (d *Docx) SaveToFile(path string) (err error) {
 }
 
 func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
-	// if xml == "" {
-	// 	fmt.Println(xml)
-	// }
-
 	writer, err := wr.Create(filename)
 	if err != nil {
 		fmt.Println(filename)
@@ -376,11 +378,11 @@ func StringBuilder(s ...string) string {
 	return buf.String()
 }
 
-func findStrInSlice(slice []string, val string) int {
-	for i, item := range slice {
-		if item == val {
-			return i
-		}
-	}
-	return -1
-}
+// func findStrInSlice(slice []string, val string) int {
+// 	for i, item := range slice {
+// 		if item == val {
+// 			return i
+// 		}
+// 	}
+// 	return -1
+// }
