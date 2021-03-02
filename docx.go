@@ -28,7 +28,7 @@ type Docx struct {
 	Headers          map[int]string
 	Footers          map[int]string
 	Relations        map[string]string
-	// NewImages    map[string]string
+	NewImages        map[string]ImgValue
 }
 
 //ZipData Contains functions to work with data from a zip file
@@ -73,6 +73,9 @@ func getDocx(path string) (*Docx, *ZipBuffer) {
 	SettingsPartName, SettingsPart := b.getTempDocumentSettingsPart(Relations)
 	ContentTypesName, ContentTypes := b.getTempDocumentContentTypes(Relations)
 
+	aaa := "asdadsadwqfqgqgqcsa"
+	strReplace([]string{"a", "s"}, []string{"x", "y"}, aaa)
+
 	return &Docx{
 		ZipBuffer:        &b,
 		Headers:          Headers,
@@ -84,6 +87,7 @@ func getDocx(path string) (*Docx, *ZipBuffer) {
 		SettingsPartName: SettingsPartName,
 		ContentTypes:     ContentTypes,
 		ContentTypesName: ContentTypesName,
+		NewImages:        make(map[string]ImgValue),
 	}, &b
 }
 
@@ -127,21 +131,56 @@ func (d *Docx) SaveToFile(path string) (err error) {
 		}
 	}
 
+	//写入图片文件
+	if len(d.NewImages) > 0 {
+		d.saveImages(wr)
+	}
+
 	wr.Close()
 	w.Close()
+	return nil
+}
+
+func (d *Docx) saveImages(wr *zip.Writer) error {
+	var repetition = make([]string, 0, len(d.NewImages))
+
+	for _, image := range d.NewImages {
+		//在切片中查找重复
+		if findStrInSlice(repetition, image.Replace) != -1 {
+			continue
+		}
+
+		writer, err := wr.Create(image.Replace)
+		if err != nil {
+			return err
+		}
+		files, err := os.Open(image.Path)
+		defer files.Close()
+		if err != nil {
+			return err
+		}
+		imageContent, err := ioutil.ReadAll(files)
+		if err != nil {
+			return err
+		}
+		_, err = writer.Write(imageContent)
+		if err != nil {
+			return err
+		}
+		repetition = append(repetition, image.Replace)
+	}
+
 	return nil
 }
 
 func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
 	writer, err := wr.Create(filename)
 	if err != nil {
-		fmt.Println(filename)
 		return err
 	}
 
 	_, err = writer.Write([]byte(xml))
 	if err != nil {
-		fmt.Println(filename)
 		return err
 	}
 
@@ -378,11 +417,23 @@ func StringBuilder(s ...string) string {
 	return buf.String()
 }
 
-// func findStrInSlice(slice []string, val string) int {
-// 	for i, item := range slice {
-// 		if item == val {
-// 			return i
-// 		}
-// 	}
-// 	return -1
-// }
+func findStrInSlice(slice []string, val string) int {
+	for i, item := range slice {
+		if item == val {
+			return i
+		}
+	}
+	return -1
+}
+
+func strReplace(search, replace []string, s string) string {
+	if len(search) != len(replace) {
+		return ""
+	}
+
+	for i := 0; i < len(search); i++ {
+		s = strings.ReplaceAll(s, search[i], replace[i])
+	}
+
+	return s
+}

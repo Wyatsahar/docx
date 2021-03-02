@@ -10,6 +10,7 @@ import (
 	_ "image/png"
 	"io/ioutil"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ type ImgValue struct {
 	Path, Type string
 	Width      int
 	Height     int
+	Search     string
+	Replace    string
 }
 
 //SetWidth 设置图片宽度
@@ -63,7 +66,7 @@ func GetArrangeImage(path string) ImgValue {
 		Path:   path,
 		Width:  width,
 		Height: height,
-		Type:   "image/" + t,
+		Type:   t,
 	}
 }
 
@@ -75,14 +78,20 @@ func (d *Docx) SetImagesValues(replace string, img ImgValue) {
 	//找到所有标签并且去皮
 	contentTags := d.getVariablesForPart(d.MainPart)
 
-	fmt.Println(d.Relations[d.MainPartName])
+	// fmt.Println(d.Relations[d.MainPartName])
 
 	for _, tagV := range imgVariablesFilter(contentTags, replace) {
 		//整理每个 标签所用到的 height width
 		rid := "rId" + strconv.Itoa((strings.Count(d.Relations[d.MainPartName], "<Relationship")))
-		fmt.Println(rid)
-		fmt.Println(tagV)
+		img.Search = tagV
+
+		d.addImageToRelations(d.MainPartName, rid, &img)
+
+		// fmt.Println(rid)
 	}
+
+	fmt.Println(d.NewImages)
+
 	if len(d.Footers) != 0 {
 		for _, footer := range d.Footers {
 			//查找所有尾部标签 去皮
@@ -100,8 +109,28 @@ func (d *Docx) SetImagesValues(replace string, img ImgValue) {
 
 }
 
-func addImageToRelations() {
+func (d *Docx) addImageToRelations(partFileName, rid string, img *ImgValue) {
+	typeTpl := "<Override PartName=\"/word/media/{IMG}\" ContentType=\"image/{EXT}\"/>"
+	// relationTpl := "<Relationship Id=\"{RID}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{IMG}\"/>"
+	// newRelationsTpl := "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"
+	// newRelationsTypeTpl := "<Override PartName=\"/{RELS}\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
 
+	img.Replace = `word/media/` + `image_` + rid + `_` + pathInfo(partFileName) + `.` + img.Type
+	d.NewImages[img.Search] = *img
+
+	typeTpl = strReplace([]string{`{IMG}`, `{EXT}`}, []string{img.Replace, img.Type}, typeTpl)
+
+	d.ContentTypes = strings.Replace(d.ContentTypes, `</Types>`, typeTpl, -1) + `</Types>`
+
+	fmt.Println()
+	// fmt.Println(d.ContentTypes)
+
+}
+
+func pathInfo(fileFullName string) string {
+	filenameall := path.Base(fileFullName)
+	filesuffix := path.Ext(fileFullName)
+	return filenameall[0 : len(filenameall)-len(filesuffix)]
 }
 
 //获取 标签上设置的图片参数
