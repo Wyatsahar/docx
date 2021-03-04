@@ -73,9 +73,6 @@ func getDocx(path string) (*Docx, *ZipBuffer) {
 	SettingsPartName, SettingsPart := b.getTempDocumentSettingsPart(Relations)
 	ContentTypesName, ContentTypes := b.getTempDocumentContentTypes(Relations)
 
-	aaa := "asdadsadwqfqgqgqcsa"
-	strReplace([]string{"a", "s"}, []string{"x", "y"}, aaa)
-
 	return &Docx{
 		ZipBuffer:        &b,
 		Headers:          Headers,
@@ -93,12 +90,12 @@ func getDocx(path string) (*Docx, *ZipBuffer) {
 
 //SaveToFile 保存文件
 func (d *Docx) SaveToFile(path string) (err error) {
+
 	w, err := os.Create(path)
 	wr := zip.NewWriter(w)
 	if err != nil {
 		return err
 	}
-
 	for _, file := range d.ZipBuffer.files() {
 		xml := d.ZipBuffer.getFromName(file.Name)
 		for headerIndex, header := range d.Headers {
@@ -150,10 +147,11 @@ func (d *Docx) saveImages(wr *zip.Writer) error {
 			continue
 		}
 
-		writer, err := wr.Create(image.Replace)
+		writer, err := wr.Create(`word/media/` + image.Replace)
 		if err != nil {
 			return err
 		}
+
 		files, err := os.Open(image.Path)
 		defer files.Close()
 		if err != nil {
@@ -174,6 +172,11 @@ func (d *Docx) saveImages(wr *zip.Writer) error {
 }
 
 func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
+
+	if _, ok := d.Relations[getRemoveRelationsName(filename)]; ok && getRemoveRelationsName(filename) != filename {
+		return
+	}
+
 	writer, err := wr.Create(filename)
 	if err != nil {
 		return err
@@ -186,6 +189,7 @@ func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error
 
 	if v, ok := d.Relations[filename]; ok {
 		relsFileName := getRelationsName(filename)
+
 		relsWriter, err := wr.Create(relsFileName)
 		if err != nil {
 			return errors.New("create error")
@@ -195,7 +199,6 @@ func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error
 			return errors.New("relsWriter error")
 		}
 	}
-
 	return nil
 }
 
@@ -334,6 +337,11 @@ func (b *ZipBuffer) getTempDocumentSettingsPart(relations map[string]string) (na
 
 func getRelationsName(s string) string {
 	return StringBuilder("word/_rels/", filepath.Base(s), ".rels")
+}
+
+// word/_rels/aaa.xml.rels
+func getRemoveRelationsName(s string) string {
+	return strReplace([]string{"_rels/", ".rels"}, []string{"", ""}, s)
 }
 
 //定位位置

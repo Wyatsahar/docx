@@ -36,6 +36,7 @@ type ImgValue struct {
 	Height     int
 	Search     string
 	Replace    string
+	Rid        string
 }
 
 //SetWidth 设置图片宽度
@@ -51,7 +52,7 @@ func (i ImgValue) SetHeight(height int) ImgValue {
 }
 
 //GetArrangeImage return imgValue
-func GetArrangeImage(path string) ImgValue {
+func (d *Docx) GetArrangeImage(path string) ImgValue {
 	file, err := os.Open(path)
 	if err != nil {
 		return ImgValue{}
@@ -71,60 +72,146 @@ func GetArrangeImage(path string) ImgValue {
 }
 
 // SetImagesValues 设置图片
-func (d *Docx) SetImagesValues(replace string, img ImgValue) {
+/*
+	图片 header document foot 写的位置都是不一样的
+	所以只有在设置的时候能查到
+*/
+func (d *Docx) SetImagesValues(search string, img ImgValue) {
 
-	// imgTpl = `<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>`
+	if img.Type == "" {
+		return
+	}
 
 	//找到所有标签并且去皮
 	contentTags := d.getVariablesForPart(d.MainPart)
-
-	// fmt.Println(d.Relations[d.MainPartName])
-
-	for _, tagV := range imgVariablesFilter(contentTags, replace) {
-		//整理每个 标签所用到的 height width
-		rid := "rId" + strconv.Itoa((strings.Count(d.Relations[d.MainPartName], "<Relationship")))
-		img.Search = tagV
-
-		d.addImageToRelations(d.MainPartName, rid, &img)
-
-		// fmt.Println(rid)
-	}
-
-	fmt.Println(d.NewImages)
-
-	if len(d.Footers) != 0 {
-		for _, footer := range d.Footers {
-			//查找所有尾部标签 去皮
-			fmt.Println(d.getVariablesForPart(footer))
-		}
-	}
-
-	if len(d.Headers) != 0 {
-		for _, header := range d.Headers {
-			//查找所有头部标签 去皮
-			d.getVariablesForPart(header)
+	d.MainPart = d.addImageToDocx(contentTags, search, img, d.MainPartName, d.MainPart)
+	for headerName, header := range d.Headers {
+		//找到所有标签并且去皮
+		contentTags1 := d.getVariablesForPart(header)
+		if len(contentTags1) > 0 {
+			hs := d.addImageToDocx(contentTags1, search, img, "header"+strconv.Itoa(headerName), header)
+			if hs != "" {
+				d.Headers[headerName] = hs
+			}
 
 		}
+
 	}
 
+	for footerName, footer := range d.Footers {
+		//找到所有标签并且去皮
+		contentTags2 := d.getVariablesForPart(footer)
+		if len(contentTags2) > 0 {
+			fs := d.addImageToDocx(contentTags2, search, img, "header"+strconv.Itoa(footerName), footer)
+			if fs != "" {
+				d.Headers[footerName] = fs
+			}
+		}
+	}
 }
 
-func (d *Docx) addImageToRelations(partFileName, rid string, img *ImgValue) {
+func (d *Docx) addImageToDocx(contentTags []string, search string, img ImgValue, fileName string, content string) string {
+	imgTpl := `<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>`
+	for _, mark := range imgVariablesFilter(contentTags, search) {
+		fmt.Println(mark)
+		//整理每个 标签所用到的 height width
+		img.Search = mark
+		rid := d.getRid(fileName, &img)
+
+		d.addImageToRelations(fileName, rid, &img)
+
+		xmlImage := strReplace([]string{`{RID}`, `{WIDTH}`, `{HEIGHT}`}, []string{`rId` + rid, strconv.Itoa(img.Width), strconv.Itoa(img.Height)}, imgTpl)
+
+		re := regexp.MustCompile(`(<[^<]+>)([^<]*)(` + regexp.QuoteMeta(ensureMacroCompleted(mark)) + `)([^>]*)(<[^>]+>)`)
+
+		matches := re.FindStringSubmatch(content)
+
+		if len(matches) > 0 {
+			wholeTag := matches[0]
+
+			matches = matches[1:]
+
+			openTag := matches[0]
+			prefix := matches[1]
+			postfix := matches[3]
+			closeTag := matches[4]
+
+			replacexml := StringBuilder(openTag, prefix, closeTag, xmlImage, openTag, postfix, closeTag)
+
+			return strings.Replace(content, wholeTag, replacexml, -1)
+
+		}
+
+	}
+	return ""
+}
+
+func (d *Docx) getRid(partFileName string, img *ImgValue) string {
+
+	rid := strconv.Itoa(strings.Count(d.Relations[partFileName], "<Relationship"))
+
+	return rid
+}
+
+/*
+	map["img:100:200"]{
+		Path:"aaa.png"
+		Width:100,
+		Height,200,
+		Search:img:100:200,
+		Replace:document_rid1.png
+	}
+*/
+func (d *Docx) addImageToRelations(partFileName string, rid string, img *ImgValue) {
 	typeTpl := "<Override PartName=\"/word/media/{IMG}\" ContentType=\"image/{EXT}\"/>"
-	// relationTpl := "<Relationship Id=\"{RID}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{IMG}\"/>"
-	// newRelationsTpl := "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"
-	// newRelationsTypeTpl := "<Override PartName=\"/{RELS}\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+	relationTpl := "<Relationship Id=\"{RID}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{IMG}\"/>"
+	newRelationsTpl := "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"
+	newRelationsTypeTpl := "<Override PartName=\"/{RELS}\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
 
-	img.Replace = `word/media/` + `image_` + rid + `_` + pathInfo(partFileName) + `.` + img.Type
-	d.NewImages[img.Search] = *img
+	if _, ok := d.NewImages[img.Search]; !ok && !d.findDuplicateTags(*img) {
+		partName := pathInfo(partFileName)
+		img.Rid = rid
+		img.Replace = `image_` + rid + `_` + partName + `.` + img.Type
+		d.NewImages[img.Search] = *img
 
-	typeTpl = strReplace([]string{`{IMG}`, `{EXT}`}, []string{img.Replace, img.Type}, typeTpl)
+		typeTpl = strReplace([]string{`{IMG}`, `{EXT}`}, []string{img.Replace, img.Type}, typeTpl)
+		d.ContentTypes = strings.Replace(d.ContentTypes, `</Types>`, typeTpl, -1) + `</Types>`
+	} else {
+		d.NewImages[img.Search] = d.getDuplicateTags(*img)
+	}
+	xmlImageRelation := strReplace([]string{`{RID}`, `{IMG}`}, []string{"rId" + rid, d.NewImages[img.Search].Replace}, relationTpl)
 
-	d.ContentTypes = strings.Replace(d.ContentTypes, `</Types>`, typeTpl, -1) + `</Types>`
+	//如果没有 则添加
+	if _, ok := d.Relations[partFileName]; !ok {
+		d.Relations[partFileName] = newRelationsTpl
+		xmlRelationsType := strings.Replace(newRelationsTypeTpl, `{RELS}`, getRelationsName(partFileName), -1) + `</Types>`
 
-	fmt.Println()
-	// fmt.Println(d.ContentTypes)
+		d.ContentTypes = strings.Replace(d.ContentTypes, `</Types>`, xmlRelationsType, -1) + `</Types>`
+	}
 
+	d.Relations[partFileName] = strings.Replace(d.Relations[partFileName], `</Relationships>`, xmlImageRelation, -1) + `</Relationships>`
+}
+
+//获取一样的
+func (d *Docx) getDuplicateTags(img ImgValue) ImgValue {
+	for _, v := range d.NewImages {
+		if v.Path == img.Path {
+			return v
+		}
+	}
+	return ImgValue{}
+}
+
+func (d *Docx) findDuplicateTags(img ImgValue) (r bool) {
+	r = false
+	for _, v := range d.NewImages {
+		if v.Path == img.Path {
+			r = true
+			break
+		}
+	}
+
+	return
 }
 
 func pathInfo(fileFullName string) string {
@@ -250,16 +337,16 @@ func (d *Docx) fixBrokenMacros() {
 	}
 	//修复 content
 	d.MainPart = re.ReplaceAllStringFunc(d.MainPart, f)
-	//修复 footers
-	if len(d.Footers) != 0 {
-		for k, footer := range d.Footers {
-			d.Footers[k] = re.ReplaceAllStringFunc(footer, f)
-		}
-	}
-	//修复 headers
-	if len(d.Headers) != 0 {
-		for k, header := range d.Headers {
-			d.Headers[k] = re.ReplaceAllStringFunc(header, f)
-		}
-	}
+	// //修复 footers
+	// if len(d.Footers) != 0 {
+	// 	for k, footer := range d.Footers {
+	// 		d.Footers[k] = re.ReplaceAllStringFunc(footer, f)
+	// 	}
+	// }
+	// //修复 headers
+	// if len(d.Headers) != 0 {
+	// 	for k, header := range d.Headers {
+	// 		d.Headers[k] = re.ReplaceAllStringFunc(header, f)
+	// 	}
+	// }
 }
