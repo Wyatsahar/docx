@@ -3,7 +3,6 @@ package docx
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"image"
 	_ "image/gif" // 检测图片类型
 	_ "image/jpeg"
@@ -114,14 +113,10 @@ func (d *Docx) SetImagesValues(search string, img ImgValue) {
 func (d *Docx) addImageToDocx(contentTags []string, search string, img ImgValue, fileName string, content string) string {
 	imgTpl := `<w:pict><v:shape type="#_x0000_t75" style="width:{WIDTH};height:{HEIGHT}"><v:imagedata r:id="{RID}" o:title=""/></v:shape></w:pict>`
 	for _, mark := range imgVariablesFilter(contentTags, search) {
-		fmt.Println(mark)
 		//整理每个 标签所用到的 height width
 		img.Search = mark
-		fmt.Println(fileName)
 		rid := d.getRid(fileName, &img)
-		fmt.Println(rid)
 		d.addImageToRelations(fileName, rid, &img)
-		fmt.Println()
 
 		xmlImage := strReplace([]string{`{RID}`, `{WIDTH}`, `{HEIGHT}`}, []string{`rId` + rid, strconv.Itoa(img.Width), strconv.Itoa(img.Height)}, imgTpl)
 
