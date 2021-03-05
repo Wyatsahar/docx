@@ -28,7 +28,7 @@ type Docx struct {
 	Headers          map[int]string
 	Footers          map[int]string
 	Relations        map[string]string
-	// NewImages    map[string]string
+	NewImages        map[string]ImgValue
 }
 
 //ZipData Contains functions to work with data from a zip file
@@ -53,7 +53,13 @@ func (b *ZipBuffer) Close() error {
 
 //LoadInit 初始化Docx
 func LoadInit(path string) (*Docx, *ZipBuffer) {
-	// func LoadInit(path string) {
+	d, rc := getDocx(path)
+	//整理错误标签
+	d.fixBrokenMacros()
+	return d, rc
+}
+
+func getDocx(path string) (*Docx, *ZipBuffer) {
 	//打开zip文件
 	rc, _ := zip.OpenReader(path)
 
@@ -78,17 +84,18 @@ func LoadInit(path string) (*Docx, *ZipBuffer) {
 		SettingsPartName: SettingsPartName,
 		ContentTypes:     ContentTypes,
 		ContentTypesName: ContentTypesName,
+		NewImages:        make(map[string]ImgValue),
 	}, &b
 }
 
 //SaveToFile 保存文件
 func (d *Docx) SaveToFile(path string) (err error) {
+
 	w, err := os.Create(path)
 	wr := zip.NewWriter(w)
 	if err != nil {
 		return err
 	}
-
 	for _, file := range d.ZipBuffer.files() {
 		xml := d.ZipBuffer.getFromName(file.Name)
 		for headerIndex, header := range d.Headers {
@@ -121,30 +128,68 @@ func (d *Docx) SaveToFile(path string) (err error) {
 		}
 	}
 
+	//写入图片文件
+	if len(d.NewImages) > 0 {
+		d.saveImages(wr)
+	}
+
 	wr.Close()
 	w.Close()
 	return nil
 }
 
+func (d *Docx) saveImages(wr *zip.Writer) error {
+	var repetition = make([]string, 0, len(d.NewImages))
+
+	for _, image := range d.NewImages {
+		//在切片中查找重复
+		if findStrInSlice(repetition, image.Replace) != -1 {
+			continue
+		}
+
+		writer, err := wr.Create(`word/media/` + image.Replace)
+		if err != nil {
+			return err
+		}
+
+		files, err := os.Open(image.Path)
+		defer files.Close()
+		if err != nil {
+			return err
+		}
+		imageContent, err := ioutil.ReadAll(files)
+		if err != nil {
+			return err
+		}
+		_, err = writer.Write(imageContent)
+		if err != nil {
+			return err
+		}
+		repetition = append(repetition, image.Replace)
+	}
+
+	return nil
+}
+
 func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
-	// if xml == "" {
-	// 	fmt.Println(xml)
-	// }
+
+	if _, ok := d.Relations[getRemoveRelationsName(filename)]; ok && getRemoveRelationsName(filename) != filename {
+		return
+	}
 
 	writer, err := wr.Create(filename)
 	if err != nil {
-		fmt.Println(filename)
 		return err
 	}
 
 	_, err = writer.Write([]byte(xml))
 	if err != nil {
-		fmt.Println(filename)
 		return err
 	}
 
 	if v, ok := d.Relations[filename]; ok {
 		relsFileName := getRelationsName(filename)
+
 		relsWriter, err := wr.Create(relsFileName)
 		if err != nil {
 			return errors.New("create error")
@@ -154,7 +199,6 @@ func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error
 			return errors.New("relsWriter error")
 		}
 	}
-
 	return nil
 }
 
@@ -295,6 +339,11 @@ func getRelationsName(s string) string {
 	return StringBuilder("word/_rels/", filepath.Base(s), ".rels")
 }
 
+// word/_rels/aaa.xml.rels
+func getRemoveRelationsName(s string) string {
+	return strReplace([]string{"_rels/", ".rels"}, []string{"", ""}, s)
+}
+
 //定位位置
 func (b *ZipBuffer) locateName(s string) int {
 	for k, file := range b.files() {
@@ -383,4 +432,16 @@ func findStrInSlice(slice []string, val string) int {
 		}
 	}
 	return -1
+}
+
+func strReplace(search, replace []string, s string) string {
+	if len(search) != len(replace) {
+		return ""
+	}
+
+	for i := 0; i < len(search); i++ {
+		s = strings.ReplaceAll(s, search[i], replace[i])
+	}
+
+	return s
 }
