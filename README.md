@@ -73,3 +73,31 @@ func main() {
 | 1 | 张三 |
 | 2 | 李四 |
 | 3 | 王五 |
+
+
+
+#### 替换图片
+
+```go
+import (
+	"github.com/wyatsahar/docx"
+)
+
+func main (){
+    //载入word
+	doc, rc := docx.LoadInit("./document_test.docx")
+    
+    //增加图片 设置宽高
+	img1 := doc.GetArrangeImage("./aaa.png").SetHeight(100).SetWidth(100)
+	img2 := doc.GetArrangeImage("./bbb.jpg").SetHeight(150).SetWidth(200)
+	//替换图片
+	doc.SetImagesValues("img", img1)
+	doc.SetImagesValues("img3", img2)
+	doc.SetImagesValues("img2", img1)
+    //保存文件
+	doc.SaveToFile("./new_result_2.docx")
+	//关闭资源
+	rc.Close()
+}
+```
+
