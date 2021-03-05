@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/gif"
+	_ "image/gif" // 检测图片类型
 	_ "image/jpeg"
 	_ "image/png"
 	"io/ioutil"
@@ -85,11 +85,12 @@ func (d *Docx) SetImagesValues(search string, img ImgValue) {
 	//找到所有标签并且去皮
 	contentTags := d.getVariablesForPart(d.MainPart)
 	d.MainPart = d.addImageToDocx(contentTags, search, img, d.MainPartName, d.MainPart)
+
 	for headerName, header := range d.Headers {
 		//找到所有标签并且去皮
 		contentTags1 := d.getVariablesForPart(header)
 		if len(contentTags1) > 0 {
-			hs := d.addImageToDocx(contentTags1, search, img, "header"+strconv.Itoa(headerName), header)
+			hs := d.addImageToDocx(contentTags1, search, img, "word/header"+strconv.Itoa(headerName)+".xml", header)
 			if hs != "" {
 				d.Headers[headerName] = hs
 			}
@@ -102,7 +103,7 @@ func (d *Docx) SetImagesValues(search string, img ImgValue) {
 		//找到所有标签并且去皮
 		contentTags2 := d.getVariablesForPart(footer)
 		if len(contentTags2) > 0 {
-			fs := d.addImageToDocx(contentTags2, search, img, "header"+strconv.Itoa(footerName), footer)
+			fs := d.addImageToDocx(contentTags2, search, img, "word/footer"+strconv.Itoa(footerName)+".xml", footer)
 			if fs != "" {
 				d.Headers[footerName] = fs
 			}
@@ -116,9 +117,11 @@ func (d *Docx) addImageToDocx(contentTags []string, search string, img ImgValue,
 		fmt.Println(mark)
 		//整理每个 标签所用到的 height width
 		img.Search = mark
+		fmt.Println(fileName)
 		rid := d.getRid(fileName, &img)
-
+		fmt.Println(rid)
 		d.addImageToRelations(fileName, rid, &img)
+		fmt.Println()
 
 		xmlImage := strReplace([]string{`{RID}`, `{WIDTH}`, `{HEIGHT}`}, []string{`rId` + rid, strconv.Itoa(img.Width), strconv.Itoa(img.Height)}, imgTpl)
 
@@ -130,7 +133,6 @@ func (d *Docx) addImageToDocx(contentTags []string, search string, img ImgValue,
 			wholeTag := matches[0]
 
 			matches = matches[1:]
-
 			openTag := matches[0]
 			prefix := matches[1]
 			postfix := matches[3]
