@@ -16,18 +16,19 @@ import (
 
 func main() {
 	//载入word
-	doc, rc := docx.LoadInit("./document_test.docx")
+	doc := docx.Load("./document_test.docx")
 	//批量文本替换
 	var data = make(map[string]string)
 	data["search"] = "批量替换"
-	data["search1"] = "批量替换"
+	data["search1"] = "批量替换1"
 	doc.SetValue(data)
 	//单独文本替换
 	doc.SetValue("search2", "单独替换")
-    //保存文件
+        //另存为
 	doc.SaveToFile("./new_result_2.docx")
-	//关闭资源
-	rc.Close()
+	//保存
+	doc.Save()
+	
 }
 
 ```
@@ -48,7 +49,7 @@ import (
 
 func main() {
     //载入word
-	doc, rc := docx.LoadInit("./document_test.docx")
+	doc := docx.Load("./document_test.docx")
 	//复制行
 	doc.CloneRow("id", 3)
 	//替换复制行后的标签
@@ -60,10 +61,10 @@ func main() {
 	data1["id#2"] = "3"
 	data1["name#2"] = "王五"
 	doc.SetValue(data1)
-    //保存文件
-	doc.SaveToFile("./new_result_2.docx")
-	//关闭资源
-	rc.Close()
+        //另存为
+        doc.SaveToFile("./new_result_2.docx")
+
+	
 }
 ```
 
@@ -85,7 +86,7 @@ import (
 
 func main (){
     //载入word
-	doc, rc := docx.LoadInit("./document_test.docx")
+	doc := docx.Load("./document_test.docx")
     
     //增加图片 设置宽高
 	img1 := doc.GetArrangeImage("./aaa.png").SetHeight(100).SetWidth(100)
@@ -94,10 +95,9 @@ func main (){
 	doc.SetImagesValues("img", img1)
 	doc.SetImagesValues("img3", img2)
 	doc.SetImagesValues("img2", img1)
-    //保存文件
-	doc.SaveToFile("./new_result_2.docx")
-	//关闭资源
-	rc.Close()
+	
+        //保存
+        doc.Save()
 }
 ```
 

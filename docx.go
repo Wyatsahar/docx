@@ -18,6 +18,7 @@ import (
 
 //Docx 文档
 type Docx struct {
+	Path             string
 	ZipBuffer        *ZipBuffer
 	MainPart         string
 	MainPartName     string
@@ -51,15 +52,15 @@ func (b *ZipBuffer) Close() error {
 	return b.rc.Close()
 }
 
-//LoadInit 初始化Docx
-func LoadInit(path string) (*Docx, *ZipBuffer) {
-	d, rc := getDocx(path)
+//Load 初始化Docx
+func Load(path string) *Docx {
+	d := getDocx(path)
 	//整理错误标签
 	d.fixBrokenMacros()
-	return d, rc
+	return d
 }
 
-func getDocx(path string) (*Docx, *ZipBuffer) {
+func getDocx(path string) *Docx {
 	//打开zip文件
 	rc, _ := zip.OpenReader(path)
 
@@ -74,6 +75,7 @@ func getDocx(path string) (*Docx, *ZipBuffer) {
 	ContentTypesName, ContentTypes := b.getTempDocumentContentTypes(Relations)
 
 	return &Docx{
+		Path:             path,
 		ZipBuffer:        &b,
 		Headers:          Headers,
 		Footers:          Footers,
@@ -85,44 +87,57 @@ func getDocx(path string) (*Docx, *ZipBuffer) {
 		ContentTypes:     ContentTypes,
 		ContentTypesName: ContentTypesName,
 		NewImages:        make(map[string]ImgValue),
-	}, &b
+	}
 }
 
 //SaveToFile 保存文件
-func (d *Docx) SaveToFile(path string) (err error) {
-
-	w, err := os.Create(path)
-	wr := zip.NewWriter(w)
+func (d *Docx) Save() error {
+	err := d.SaveToFile(d.Path)
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+//SaveToFile 另存为
+func (d *Docx) SaveToFile(path string) (err error) {
+	defer d.ZipBuffer.Close()
+
+	w, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer w.Close()
+	wr := zip.NewWriter(w)
+	defer wr.Close()
+
 	for _, file := range d.ZipBuffer.files() {
-		xml := d.ZipBuffer.getFromName(file.Name)
+		xmlString := d.ZipBuffer.getFromName(file.Name)
 		for headerIndex, header := range d.Headers {
 			if file.Name == getHeaderName(headerIndex) {
-				xml = header
+				xmlString = header
 			}
 		}
 
 		for footerIndex, footer := range d.Footers {
 			if file.Name == getFooterName(footerIndex) {
-				xml = footer
+				xmlString = footer
 			}
 		}
 
 		if file.Name == d.SettingsPartName {
-			xml = d.SettingsPart
+			xmlString = d.SettingsPart
 		}
 
 		if file.Name == d.MainPartName && d.MainPart != "" {
-			xml = d.MainPart
+			xmlString = d.MainPart
 		}
 
 		if file.Name == d.ContentTypes && d.ContentTypes != "" {
-			xml = d.ContentTypes
+			xmlString = d.ContentTypes
 		}
 
-		err := d.savePartWithRels(wr, file.Name, xml)
+		err := d.savePartWithRels(wr, file.Name, xmlString)
 		if err != nil {
 			fmt.Println(err.Error())
 		}
@@ -133,8 +148,6 @@ func (d *Docx) SaveToFile(path string) (err error) {
 		_ = d.saveImages(wr)
 	}
 
-	_ = wr.Close()
-	w.Close()
 	return nil
 }
 
@@ -152,7 +165,7 @@ func (d *Docx) saveImages(wr *zip.Writer) error {
 			return err
 		}
 		files, err := os.Open(image.Path)
-		if files == nil{
+		if files == nil {
 			return err
 		}
 		defer files.Close()
@@ -218,10 +231,10 @@ func (d *Docx) SetValue(s ...interface{}) error {
 	// 使用  map[string]string 来替换
 	if reflect.TypeOf(s[0]).Kind() == reflect.Map {
 		for search, replace := range s[0].(map[string]string) {
-			d.replace(search, replace, -1)
+			_ = d.replace(search, replace, -1)
 		}
 	} else if reflect.TypeOf(s[0]).Kind() == reflect.String && reflect.TypeOf(s[1]).Kind() == reflect.String {
-		d.replace(s[0].(string), s[1].(string), -1)
+		_ = d.replace(s[0].(string), s[1].(string), -1)
 	} else {
 		return errors.New("参数错误")
 	}
