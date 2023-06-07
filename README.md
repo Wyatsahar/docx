@@ -1,9 +1,9 @@
 
 
-## A simple go (golang) Microsoft Word (. Docx) tool library
+## A simple go (golang) Microsoft Word (. Docx) tool library to replace images/text
 
 ### 一个简单的golang Word操作库
-
+### 参照 PhpOffice/PhpWord 写的一个小工具
 
 
 #### 替换文本
@@ -27,8 +27,6 @@ func main() {
 	doc.SetValue("search2", "单独替换")
         //另存为
 	doc.SaveToFile("./new_result_2.docx")
-	//保存
-	doc.Save()
 	
 }
 
@@ -49,19 +47,19 @@ import (
 )
 
 func main() {
-    //载入word
-	doc := docx.Load("./document_test.docx")
-	//复制行
-	doc.CloneRow("id", 3)
-	//替换复制行后的标签
-	var data1 = make(map[string]string)
-	data1["id#0"] = "1"
-	data1["name#0"] = "张三"
-	data1["id#1"] = "2"
-	data1["name#1"] = "李四"
-	data1["id#2"] = "3"
-	data1["name#2"] = "王五"
-	doc.SetValue(data1)
+        //载入word
+        doc := docx.Load("./document_test.docx")
+        //复制行
+        doc.CloneRow("id", 3)
+        //替换复制行后的标签
+        var data1 = make(map[string]string)
+        data1["id#0"] = "1"
+        data1["name#0"] = "张三"
+        data1["id#1"] = "2"
+        data1["name#1"] = "李四"
+        data1["id#2"] = "3"
+        data1["name#2"] = "王五"
+        doc.SetValue(data1)
         //另存为
         doc.SaveToFile("./new_result_2.docx")
 
@@ -96,9 +94,9 @@ func main (){
 	doc.SetImagesValues("img", img1)
 	doc.SetImagesValues("img3", img2)
 	doc.SetImagesValues("img2", img1)
-	
-        //保存
-        doc.Save()
+        //另存为
+        doc.SaveToFile("./new_result_2.docx")
+
 }
 ```
 

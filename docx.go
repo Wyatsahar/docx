@@ -90,8 +90,8 @@ func getDocx(path string) *Docx {
 	}
 }
 
-//SaveToFile 保存文件
-func (d *Docx) Save() error {
+//Save 保存文件 todo
+func (d *Docx) save() error {
 	err := d.SaveToFile(d.Path)
 	if err != nil {
 		return err
@@ -104,13 +104,10 @@ func (d *Docx) SaveToFile(path string) (err error) {
 	defer d.ZipBuffer.Close()
 
 	w, err := os.Create(path)
+	wr := zip.NewWriter(w)
 	if err != nil {
 		return err
 	}
-	defer w.Close()
-	wr := zip.NewWriter(w)
-	defer wr.Close()
-
 	for _, file := range d.ZipBuffer.files() {
 		xmlString := d.ZipBuffer.getFromName(file.Name)
 		for headerIndex, header := range d.Headers {
@@ -148,6 +145,8 @@ func (d *Docx) SaveToFile(path string) (err error) {
 		_ = d.saveImages(wr)
 	}
 
+	_ = wr.Close()
+	w.Close()
 	return nil
 }
 
@@ -231,10 +230,10 @@ func (d *Docx) SetValue(s ...interface{}) error {
 	// 使用  map[string]string 来替换
 	if reflect.TypeOf(s[0]).Kind() == reflect.Map {
 		for search, replace := range s[0].(map[string]string) {
-			_ = d.replace(search, replace, -1)
+			d.replace(search, replace, -1)
 		}
 	} else if reflect.TypeOf(s[0]).Kind() == reflect.String && reflect.TypeOf(s[1]).Kind() == reflect.String {
-		_ = d.replace(s[0].(string), s[1].(string), -1)
+		d.replace(s[0].(string), s[1].(string), -1)
 	} else {
 		return errors.New("参数错误")
 	}
