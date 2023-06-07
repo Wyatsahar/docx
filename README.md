@@ -1,6 +1,6 @@
 
 
-## A simple go (golang) Microsoft Word (. Docx) tool library
+## A simple go (golang) Microsoft Word (. Docx) tool library to replace images/text
 
 ### 一个简单的golang Word操作库
 
