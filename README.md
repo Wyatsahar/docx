@@ -1,11 +1,10 @@
 
 
-## A simple go (golang) Microsoft Word (. Docx) tool library to replace images/text
+## A simple go (golang) tool library to replace images/text/clone table row inMicrosoft Word (. Docx) 
 
 ### 一个简单的golang Word操作库
-### 参照 PhpOffice/PhpWord 写的一个小工具
 
-#### 替换文本
+#### 替换文本 replace text
 
 ```go
 
@@ -31,7 +30,7 @@ func main() {
 
 ```
 
-#### 复制行
+#### 复制行 clone table row
 
 ​	CloneRow(mark,num)
 
@@ -75,7 +74,7 @@ func main() {
 
 
 
-#### 替换图片
+#### 替换图片 replace images
 
 ```go
 import (
