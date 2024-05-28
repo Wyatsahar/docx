@@ -1,6 +1,6 @@
 
 
-## A simple go (golang) tool library to replace images/text/clone table row inMicrosoft Word (. Docx) 
+## A simple go (golang) tool library to replace images/text/clone table row in Microsoft Word (. Docx) 
 
 ### 一个简单的golang Word操作库
 
