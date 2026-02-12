@@ -1,9 +1,14 @@
 # Docx - Lightweight Golang Word Document Processing Library
 # Docx - 轻量级 Golang Word 文档处理库
 
-Docx is a lightweight library developed in Go for manipulating Microsoft Word (.docx) files. It supports text replacement, image replacement, and table row cloning by directly modifying the underlying XML structure.
+[![Go Report Card](https://goreportcard.com/badge/github.com/wyatsahar/docx)](https://goreportcard.com/report/github.com/wyatsahar/docx)
+[![Go Reference](https://pkg.go.dev/badge/github.com/wyatsahar/docx.svg)](https://pkg.go.dev/github.com/wyatsahar/docx)
+![License](https://img.shields.io/github/license/wyatsahar/docx)
+![Stars](https://img.shields.io/github/stars/wyatsahar/docx)
 
-Docx 是一个基于 Go 语言开发的轻量级库，专门用于操作 Microsoft Word (.docx) 文件。它通过直接修改底层 XML 结构的方式，支持文本替换、图片替换和表格行克隆。
+Docx is a lightweight, high-performance library developed in Go for manipulating Microsoft Word (.docx) files. It supports text replacement, image replacement, and table row cloning by directly modifying the underlying XML structure. 
+
+Docx 是一个基于 Go 语言开发的轻量级、高性能库，专门用于操作 Microsoft Word (.docx) 文件。它通过直接修改底层 XML 结构的方式，支持文本替换、图片替换和表格行克隆。无需安装 Office，不依赖 CGO，完美适配云原生与容器化部署。
 
 > **✨ Optimization Notice / 优化声明**: The core logic has been deeply refactored and evolved by **Gemini 3 Flash**.
 > 本项目核心逻辑已通过 **Gemini 3 Flash** 进行深度重构与进化。
