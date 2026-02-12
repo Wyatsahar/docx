@@ -20,7 +20,7 @@ var bmpByte = []byte("BM")
 var jpgByte = []byte{0xff, 0xd8, 0xff}
 var pngByte = []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
 
-//GIFTYPE
+// GIFTYPE
 const (
 	GIFTYPE = "image/gif"
 	BMPTYPE = "image/x-ms-bmp"
@@ -28,7 +28,7 @@ const (
 	PNGTYPE = "image/png"
 )
 
-//ImgValue 结构体
+// ImgValue 结构体
 type ImgValue struct {
 	Path, Type string
 	Width      int
@@ -38,19 +38,19 @@ type ImgValue struct {
 	Rid        string
 }
 
-//SetWidth 设置图片宽度
+// SetWidth 设置图片宽度
 func (i ImgValue) SetWidth(width int) ImgValue {
 	i.Width = width
 	return i
 }
 
-//SetHeight 设置图片高度度
+// SetHeight 设置图片高度度
 func (i ImgValue) SetHeight(height int) ImgValue {
 	i.Height = height
 	return i
 }
 
-//GetArrangeImage return imgValue
+// GetArrangeImage return imgValue
 func (d *Docx) GetArrangeImage(path string) ImgValue {
 	file, err := os.Open(path)
 	if err != nil {
@@ -122,7 +122,7 @@ func (d *Docx) addImageToDocx(contentTags []string, search string, img ImgValue,
 
 		xmlImage := strReplace([]string{`{RID}`, `{WIDTH}`, `{HEIGHT}`}, []string{`rId` + rid, strconv.Itoa(img.Width), strconv.Itoa(img.Height)}, imgTpl)
 
-		re := regexp.MustCompile(`(<[^<]+>)([^<]*)(` + regexp.QuoteMeta(ensureMacroCompleted(mark)) + `)([^>]*)(<[^>]+>)`)
+		re := regexp.MustCompile(`(<[^<]+>)([^<]*)(` + regexp.QuoteMeta(ensureMacroCompleted(d, mark)) + `)([^>]*)(<[^>]+>)`)
 
 		matches := re.FindStringSubmatch(content)
 
@@ -191,7 +191,7 @@ func (d *Docx) addImageToRelations(partFileName string, rid string, img *ImgValu
 	d.Relations[partFileName] = strings.Replace(d.Relations[partFileName], `</Relationships>`, xmlImageRelation, -1) + `</Relationships>`
 }
 
-//获取一样的
+// 获取一样的
 func (d *Docx) getDuplicateTags(img ImgValue) ImgValue {
 	for _, v := range d.NewImages {
 		if v.Path == img.Path {
@@ -219,13 +219,13 @@ func pathInfo(fileFullName string) string {
 	return filenameall[0 : len(filenameall)-len(filesuffix)]
 }
 
-//获取 标签上设置的图片参数
+// 获取 标签上设置的图片参数
 func getImageArgs(varNameWithArgs string) (varInlineArgs map[string]string) {
 	varInlineArgs = make(map[string]string)
 	vn := strings.Split(varNameWithArgs, ":")[1:]
 	reg := regexp.MustCompile(`([0-9]*[a-z%]{0,2}|auto)x([0-9]*[a-z%]{0,2}|auto)`)
 	for k, v := range vn {
-		if strings.Index(v, "=") != -1 { // arg=value
+		if strings.Contains(v, "=") { // arg=value
 			argName, argValue := listString(v, "=")
 			if argName == "size" {
 				varInlineArgs["width"], varInlineArgs["height"] = listString(argValue, "x")
@@ -238,13 +238,10 @@ func getImageArgs(varNameWithArgs string) (varInlineArgs map[string]string) {
 			switch k {
 			case 0:
 				varInlineArgs["width"] = v
-				break
 			case 1:
 				varInlineArgs["height"] = v
-				break
 			case 2:
 				varInlineArgs["ratio"] = v
-				break
 			}
 		}
 	}
@@ -257,7 +254,7 @@ func listString(s, spe string) (argKey, argValue string) {
 	return arg[0], arg[1]
 }
 
-//搜索符合标准的图片标签
+// 搜索符合标准的图片标签
 func imgVariablesFilter(variables []string, check string) (variable []string) {
 	f := func(variable string, searchString string) bool {
 
@@ -278,7 +275,7 @@ func imgVariablesFilter(variables []string, check string) (variable []string) {
 	return
 }
 
-//获取图片信息
+// 获取图片信息
 func getImagesType(imgName string) (string, error) {
 	fi, err := ioutil.ReadFile(imgName)
 	if err != nil {
@@ -313,11 +310,13 @@ func getImagesType(imgName string) (string, error) {
 	return itype, nil
 }
 
-//找到所有标签 并且去皮
+// 找到所有标签 并且去皮
 func (d *Docx) getVariablesForPart(search string) []string {
 	var total []string
 
-	reg := regexp.MustCompile(`\$\{(.*?)\}`)
+	prefix := regexp.QuoteMeta(d.Config.PlaceholderPrefix)
+	suffix := regexp.QuoteMeta(d.Config.PlaceholderSuffix)
+	reg := regexp.MustCompile(prefix + `(.*?)` + suffix)
 	contentlabel := reg.FindAllStringSubmatch(search, -1)
 	for _, v := range contentlabel {
 		total = append(total, v[1])
@@ -325,27 +324,27 @@ func (d *Docx) getVariablesForPart(search string) []string {
 	return total
 }
 
-//修复错误标签
+// 修复错误标签 (防止标签被 Word 内部 XML 标签切断)
 func (d *Docx) fixBrokenMacros() {
-	re := regexp.MustCompile(`\$(?:\{|[^{$]*\>\{)[^\}\$]*\}`)
-
-	f := func(s string) (src string) {
-		re, _ = regexp.Compile(`<[\S\s]+?>`)
-		src = re.ReplaceAllString(s, "")
+	if len(d.Config.PlaceholderPrefix) < 2 {
 		return
 	}
-	//修复 content
+	p1 := regexp.QuoteMeta(d.Config.PlaceholderPrefix[:1])
+	pRest := regexp.QuoteMeta(d.Config.PlaceholderPrefix[1:])
+	s := regexp.QuoteMeta(d.Config.PlaceholderSuffix)
+
+	// 匹配前缀第一位 + (前缀剩余位 或 标签+前缀剩余位) + 内容 + 后缀
+	regStr := p1 + `(?:` + pRest + `|[\s\S]*?\>` + pRest + `)[\s\S]*?` + s
+	re, err := regexp.Compile(regStr)
+	if err != nil {
+		return
+	}
+
+	f := func(s string) (src string) {
+		cleanReg, _ := regexp.Compile(`<[\S\s]+?>`)
+		src = cleanReg.ReplaceAllString(s, "")
+		return
+	}
+	// 修复 content
 	d.MainPart = re.ReplaceAllStringFunc(d.MainPart, f)
-	// //修复 footers
-	// if len(d.Footers) != 0 {
-	// 	for k, footer := range d.Footers {
-	// 		d.Footers[k] = re.ReplaceAllStringFunc(footer, f)
-	// 	}
-	// }
-	// //修复 headers
-	// if len(d.Headers) != 0 {
-	// 	for k, header := range d.Headers {
-	// 		d.Headers[k] = re.ReplaceAllStringFunc(header, f)
-	// 	}
-	// }
 }

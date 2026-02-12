@@ -7,16 +7,27 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
-	"unsafe"
 )
 
-//Docx 文档
+// Config 配置项
+type Config struct {
+	PlaceholderPrefix string // 占位符前缀，如 {{
+	PlaceholderSuffix string // 占位符后缀，如 }}
+}
+
+var DefaultConfig = Config{
+	PlaceholderPrefix: "{{",
+	PlaceholderSuffix: "}}",
+}
+
+// Docx 文档
 type Docx struct {
 	Path             string
 	ZipBuffer        *ZipBuffer
@@ -30,42 +41,75 @@ type Docx struct {
 	Footers          map[int]string
 	Relations        map[string]string
 	NewImages        map[string]ImgValue
+	Config           Config
 }
 
-//ZipData Contains functions to work with data from a zip file
+// ZipData Contains functions to work with data from a zip file
 type ZipData interface {
 	files() []*zip.File
 	close() error
 }
 
-//ZipBuffer zip buffer
+// ZipBuffer zip buffer
 type ZipBuffer struct {
-	rc *zip.ReadCloser
+	reader *zip.Reader
+	closer io.Closer
 }
 
 func (b *ZipBuffer) files() []*zip.File {
-	return b.rc.File
+	return b.reader.File
 }
 
-//Close 关闭
+// Close 关闭底层的 zip reader
 func (b *ZipBuffer) Close() error {
-	return b.rc.Close()
+	if b.closer != nil {
+		return b.closer.Close()
+	}
+	return nil
 }
 
-//Load 初始化Docx
-func Load(path string) *Docx {
-	d := getDocx(path)
-	//整理错误标签
-	d.fixBrokenMacros()
-	return d
+// Close 关闭资源，建议在 Docx 使用完毕后手动调用
+func (d *Docx) Close() error {
+	if d.ZipBuffer != nil {
+		return d.ZipBuffer.Close()
+	}
+	return nil
 }
 
-func getDocx(path string) *Docx {
-	//打开zip文件
-	rc, _ := zip.OpenReader(path)
+// Load 初始化Docx (兼容旧接口，默认使用 DefaultConfig)
+func Load(path string) (*Docx, error) {
+	return LoadWithOptions(path, DefaultConfig)
+}
 
-	//把zip复制一份
-	b := ZipBuffer{rc}
+// LoadWithOptions 带配置初始化Docx
+func LoadWithOptions(path string, config Config) (*Docx, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	d, err := LoadFromReader(f, fi.Size(), config)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	d.Path = path
+	d.ZipBuffer.closer = f // 确保文件的关闭
+	return d, nil
+}
+
+// LoadFromReader 从 Reader 加载文档
+func LoadFromReader(r io.ReaderAt, size int64, config Config) (*Docx, error) {
+	zr, err := zip.NewReader(r, size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zip reader: %w", err)
+	}
+
+	b := &ZipBuffer{reader: zr}
 
 	Relations := make(map[string]string)
 	Headers := b.getTempDocumentHeaders(Relations)
@@ -74,9 +118,8 @@ func getDocx(path string) *Docx {
 	SettingsPartName, SettingsPart := b.getTempDocumentSettingsPart(Relations)
 	ContentTypesName, ContentTypes := b.getTempDocumentContentTypes(Relations)
 
-	return &Docx{
-		Path:             path,
-		ZipBuffer:        &b,
+	d := &Docx{
+		ZipBuffer:        b,
 		Headers:          Headers,
 		Footers:          Footers,
 		Relations:        Relations,
@@ -87,27 +130,35 @@ func getDocx(path string) *Docx {
 		ContentTypes:     ContentTypes,
 		ContentTypesName: ContentTypesName,
 		NewImages:        make(map[string]ImgValue),
+		Config:           config,
 	}
+
+	d.fixBrokenMacros()
+	return d, nil
 }
 
-//Save 保存文件 todo
+// Save 保存文件
 func (d *Docx) save() error {
-	err := d.SaveToFile(d.Path)
-	if err != nil {
-		return err
-	}
-	return nil
+	return d.SaveToFile(d.Path)
 }
 
-//SaveToFile 另存为
+// SaveToFile 另存为
 func (d *Docx) SaveToFile(path string) (err error) {
-	defer d.ZipBuffer.Close()
-
 	w, err := os.Create(path)
-	wr := zip.NewWriter(w)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create file: %w", err)
 	}
+	defer w.Close()
+	_, err = d.WriteTo(w)
+	return err
+}
+
+// WriteTo 将文档写入指定 Writer，符合 io.WriterTo 接口
+func (d *Docx) WriteTo(w io.Writer) (int64, error) {
+	cw := &countingWriter{w: w}
+	wr := zip.NewWriter(cw)
+	defer wr.Close()
+
 	for _, file := range d.ZipBuffer.files() {
 		xmlString := d.ZipBuffer.getFromName(file.Name)
 		for headerIndex, header := range d.Headers {
@@ -130,24 +181,44 @@ func (d *Docx) SaveToFile(path string) (err error) {
 			xmlString = d.MainPart
 		}
 
-		if file.Name == d.ContentTypes && d.ContentTypes != "" {
+		if file.Name == d.ContentTypesName && d.ContentTypes != "" {
 			xmlString = d.ContentTypes
 		}
 
 		err := d.savePartWithRels(wr, file.Name, xmlString)
 		if err != nil {
-			fmt.Println(err.Error())
+			return cw.count, fmt.Errorf("failed to save part %s: %w", file.Name, err)
 		}
 	}
 
-	//写入图片文件
+	// 写入图片文件
 	if len(d.NewImages) > 0 {
-		_ = d.saveImages(wr)
+		err := d.saveImages(wr)
+		if err != nil {
+			return cw.count, fmt.Errorf("failed to save images: %w", err)
+		}
 	}
 
-	_ = wr.Close()
-	w.Close()
-	return nil
+	wr.Close()
+	return cw.count, nil
+}
+
+type countingWriter struct {
+	w     io.Writer
+	count int64
+}
+
+func (cw *countingWriter) Write(p []byte) (n int, err error) {
+	n, err = cw.w.Write(p)
+	cw.count += int64(n)
+	return
+}
+
+// SaveToBuffer 保存为内存 Buffer
+func (d *Docx) SaveToBuffer() (*bytes.Buffer, error) {
+	buf := new(bytes.Buffer)
+	_, err := d.WriteTo(buf)
+	return buf, err
 }
 
 func (d *Docx) saveImages(wr *zip.Writer) error {
@@ -163,15 +234,12 @@ func (d *Docx) saveImages(wr *zip.Writer) error {
 		if err != nil {
 			return err
 		}
-		files, err := os.Open(image.Path)
-		if files == nil {
-			return err
-		}
-		defer files.Close()
+		f, err := os.Open(image.Path)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to open image %s: %w", image.Path, err)
 		}
-		imageContent, err := ioutil.ReadAll(files)
+		imageContent, err := ioutil.ReadAll(f)
+		f.Close() // 显式关闭图片文件
 		if err != nil {
 			return err
 		}
@@ -188,7 +256,7 @@ func (d *Docx) saveImages(wr *zip.Writer) error {
 func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error) {
 
 	if _, ok := d.Relations[getRemoveRelationsName(filename)]; ok && getRemoveRelationsName(filename) != filename {
-		return
+		return nil
 	}
 
 	writer, err := wr.Create(filename)
@@ -206,11 +274,11 @@ func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error
 
 		relsWriter, err := wr.Create(relsFileName)
 		if err != nil {
-			return errors.New("create error")
+			return errors.New("create rels error")
 		}
 		_, err = relsWriter.Write([]byte(v))
 		if err != nil {
-			return errors.New("relsWriter error")
+			return errors.New("write rels error")
 		}
 	}
 	return nil
@@ -218,6 +286,7 @@ func (d *Docx) savePartWithRels(wr *zip.Writer, filename, xml string) (err error
 
 /*
 SetValue 替换文本
+
 	(d *Docx) SetValue( map[search]replace )
 	(d *Docx) SetValue( search string, replace string)
 */
@@ -227,23 +296,26 @@ func (d *Docx) SetValue(s ...interface{}) error {
 	}
 
 	//如果第一个参数为map
-	// 使用  map[string]string 来替换
 	if reflect.TypeOf(s[0]).Kind() == reflect.Map {
-		for search, replace := range s[0].(map[string]string) {
+		m, ok := s[0].(map[string]string)
+		if !ok {
+			return errors.New("map参数类型错误，应为 map[string]string")
+		}
+		for search, replace := range m {
 			d.replace(search, replace, -1)
 		}
-	} else if reflect.TypeOf(s[0]).Kind() == reflect.String && reflect.TypeOf(s[1]).Kind() == reflect.String {
+	} else if len(s) == 2 && reflect.TypeOf(s[0]).Kind() == reflect.String && reflect.TypeOf(s[1]).Kind() == reflect.String {
 		d.replace(s[0].(string), s[1].(string), -1)
 	} else {
-		return errors.New("参数错误")
+		return errors.New("参数类型错误")
 	}
 
 	return nil
 }
 
-//replace 替换文本
+// replace 替换文本
 func (d *Docx) replace(search, replace string, limit int) error {
-	encodeSearch, err := encode(StringBuilder("${", search, "}"))
+	encodeSearch, err := encode(StringBuilder(d.Config.PlaceholderPrefix, search, d.Config.PlaceholderSuffix))
 	if err != nil {
 		return err
 	}
@@ -288,9 +360,9 @@ func (b *ZipBuffer) readPartWithRels(fileName string) string {
 
 func (b *ZipBuffer) getTempDocumentFooters(relations map[string]string) map[int]string {
 	footers := make(map[int]string)
-	for i := 1; b.locateName(getFooterName(i)) > 0; i++ {
+	for i := 1; b.locateName(getFooterName(i)) >= 0; i++ {
 		footerName := getFooterName(i)
-		footer := b.getFromName(getFooterName(i))
+		footer := b.getFromName(footerName)
 		footers[i] = footer
 		if footer == "" {
 			delete(relations, footerName)
@@ -304,7 +376,7 @@ func (b *ZipBuffer) getTempDocumentFooters(relations map[string]string) map[int]
 
 func (b *ZipBuffer) getTempDocumentHeaders(relations map[string]string) map[int]string {
 	headers := make(map[int]string)
-	for i := 1; b.locateName(getHeaderName(i)) > 0; i++ {
+	for i := 1; b.locateName(getHeaderName(i)) >= 0; i++ {
 		headerName := getHeaderName(i)
 		header := b.getFromName(headerName)
 		headers[i] = header
@@ -330,7 +402,7 @@ func (b *ZipBuffer) getTempDocumentContentTypes(relations map[string]string) (na
 	if typeRelsContent == "" {
 		delete(relations, contentTypesName)
 	} else {
-		relations[contentTypesName] = b.readPartWithRels(contentTypesName)
+		relations[contentTypesName] = typeRelsContent
 	}
 
 	return contentTypesName, b.getFromName(contentTypesName)
@@ -358,7 +430,7 @@ func getRemoveRelationsName(s string) string {
 	return strReplace([]string{"_rels/", ".rels"}, []string{"", ""}, s)
 }
 
-//定位位置
+// 定位位置
 func (b *ZipBuffer) locateName(s string) int {
 	for k, file := range b.files() {
 		if file.Name == s {
@@ -368,50 +440,51 @@ func (b *ZipBuffer) locateName(s string) int {
 	return -1
 }
 
-//通过定位读取zip文件
+// 通过定位读取zip文件
 func (b *ZipBuffer) readFileWithIndex(index int) (string, error) {
 	if index == -1 {
 		return "", nil
 	}
 	rc, err := b.files()[index].Open()
 	if err != nil {
-		return "", errors.New("func : readfile , zip文件打开失败")
+		return "", fmt.Errorf("failed to open zip file member: %w", err)
 	}
+	defer rc.Close()
 	content, err := ioutil.ReadAll(rc)
 	if err != nil {
-		return "", errors.New("func : readfile , zip读取打开失败")
+		return "", fmt.Errorf("failed to read zip file member: %w", err)
 	}
-	return StringBuilder(ByteToString(content)), nil
+	return string(content), nil
 }
 
-//获取内容
+// 获取内容
 func (b *ZipBuffer) getFromName(s string) string {
 	index := b.locateName(s)
 	res, _ := b.readFileWithIndex(index)
 	return res
 }
 
-//header名称
+// header名称
 func getHeaderName(index int) string {
 	return fmt.Sprintf("word/header%d.xml", index)
 }
 
-//footer名
+// footer名
 func getFooterName(index int) string {
 	return fmt.Sprintf("word/footer%d.xml", index)
 }
 
-//setting名
+// setting名
 func getSettingsPartName() string {
 	return "word/settings.xml"
 }
 
-//contentTypes 名
+// contentTypes 名
 func getDocumentContentTypesName() string {
 	return "[Content_Types].xml"
 }
 
-//主体word 名称
+// 主体word 名称
 func (b *ZipBuffer) getMainPartName() (mainPartName string) {
 	c := b.getFromName(getDocumentContentTypesName())
 	reg := regexp.MustCompile(`PartName="\/(word\/document.*?\.xml)" ContentType="application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document\.main\+xml"`)
@@ -425,18 +498,18 @@ func (b *ZipBuffer) getMainPartName() (mainPartName string) {
 	return mainPartName
 }
 
-//ByteToString 字节转字符串
+// ByteToString 字节转字符串 (保留函数名以维持兼容性，但移除 unsafe)
 func ByteToString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	return string(b)
 }
 
-//StringBuilder 字符串拼接
+// StringBuilder 字符串拼接，优化性能
 func StringBuilder(s ...string) string {
-	var buf bytes.Buffer
+	var sb strings.Builder
 	for _, v := range s {
-		buf.WriteString(v)
+		sb.WriteString(v)
 	}
-	return buf.String()
+	return sb.String()
 }
 
 func findStrInSlice(slice []string, val string) int {

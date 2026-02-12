@@ -32,32 +32,34 @@ func getRow(d *Docx, startPosition, endPosition int) (content string) {
 	return
 }
 
-//设置标记
-func ensureMacroCompleted(mark string) string {
-	tmp := []rune(mark)
-	star := tmp[:2]
-	if string(star) != `${` && string(tmp[len(tmp)-1]) != `}` {
-		return `${` + mark + `}`
+// 设置标记
+func ensureMacroCompleted(d *Docx, mark string) string {
+	if strings.HasPrefix(mark, d.Config.PlaceholderPrefix) && strings.HasSuffix(mark, d.Config.PlaceholderSuffix) {
+		return mark
 	}
-	return mark
+	return d.Config.PlaceholderPrefix + mark + d.Config.PlaceholderSuffix
 }
 
-func indexClonedVariables(xmlRow, mark string, n int) string {
+func indexClonedVariables(d *Docx, xmlRow, mark string, n int) string {
 	var bt bytes.Buffer
-	reg := regexp.MustCompile(`\$\{(.*?)\}`)
+	// 转义前缀和后缀用于正则
+	prefix := regexp.QuoteMeta(d.Config.PlaceholderPrefix)
+	suffix := regexp.QuoteMeta(d.Config.PlaceholderSuffix)
+	reg := regexp.MustCompile(prefix + `(.*?)` + suffix)
 
 	for i := 0; i < n; i++ {
-		bt.WriteString(reg.ReplaceAllString(xmlRow, "${$1#"+strconv.Itoa(i)+`}`))
+		// 恢复为原始格式并加上索引
+		bt.WriteString(reg.ReplaceAllString(xmlRow, d.Config.PlaceholderPrefix+"$1#"+strconv.Itoa(i)+d.Config.PlaceholderSuffix))
 	}
 	return bt.String()
 }
 
-//CloneRow 复制行 (标记 行数)
+// CloneRow 复制行 (标记 行数)
 func (d *Docx) CloneRow(mark string, n int) {
 	var tempxml []string
 	var bt bytes.Buffer
 	// //设置标记
-	mark = ensureMacroCompleted(mark)
+	mark = ensureMacroCompleted(d, mark)
 	//查询第一次出现的地方
 	tagPos := strings.Index(d.MainPart, mark)
 
@@ -68,7 +70,7 @@ func (d *Docx) CloneRow(mark string, n int) {
 
 	xmlRow := getRow(d, rowStart, rowEnd)
 	tempxml = append(tempxml, getRow(d, 0, rowStart))
-	tempxml = append(tempxml, indexClonedVariables(xmlRow, mark, n))
+	tempxml = append(tempxml, indexClonedVariables(d, xmlRow, mark, n))
 	tempxml = append(tempxml, getRow(d, rowEnd, len(d.MainPart)))
 	for _, v := range tempxml {
 		bt.WriteString(v)
